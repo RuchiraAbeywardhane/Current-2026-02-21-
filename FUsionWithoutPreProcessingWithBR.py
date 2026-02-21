@@ -97,15 +97,15 @@ class Config:
         # "DISGUST": "Q2",
         
         # Q3: Negative Valence + Low Arousal (Sad, Depressed, Stunned)
-        # "SADNESS": "Q3",
-        "SURPRISE": "Q3",  # COMMENTED OUT - Moved from Q2, now excluded from 3-class system
+        "SADNESS": "Q3",
+        # "SURPRISE": "Q3",  # COMMENTED OUT - Moved from Q2, now excluded from 3-class system
         
         # Q4: Positive Valence + Low Arousal (Calm, Content, Peaceful)
-        "LIKING": "Q4",
+        # "LIKING": "Q4",
         
         # BASELINE and NEUTRAL removed - they are not emotions!
         # "BASELINE": None,
-        # "NEUTRAL": None,
+        "NEUTRAL": "Q4",
     }
     
     SUPERCLASS_ID = {"Q1": 0, "Q2": 1,"Q3":2, "Q4": 3}  # 3 classes: Q1, Q2, Q4 (Q3 removed)
