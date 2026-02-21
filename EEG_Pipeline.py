@@ -623,7 +623,7 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
         for xb, yb in tr_loader:
             xb, yb = xb.to(config.DEVICE), yb.to(config.DEVICE)
             
-            if config.USE_MIXUP and np.random.rand() < 0.5:
+            if np.random.rand() < 0.5:
                 xb_mix, ya, yb_m, lam = mixup_data(xb, yb, alpha=0.2)
                 optimizer.zero_grad()
                 logits = model(xb_mix)
