@@ -1066,6 +1066,19 @@ def create_clip_based_split(eeg_clip_names, eeg_y, eeg_subjects, bvp_clip_names,
     if len(common_clips) == 0:
         raise ValueError("No common clips found between preprocessed EEG and raw BVP!")
     
+    # ✅ FIX ISSUE #3: Ensure consistent label mappings
+    print("\n🔍 Checking label consistency...")
+    eeg_label_dist = Counter([eeg_y[i] for i, clip in enumerate(eeg_clip_names) if clip in common_clips])
+    bvp_label_dist = Counter([bvp_y[i] for i, clip in enumerate(bvp_clip_names) if clip in common_clips])
+    
+    print(f"   EEG label distribution (common clips): {dict(eeg_label_dist)}")
+    print(f"   BVP label distribution (common clips): {dict(bvp_label_dist)}")
+    
+    if eeg_label_dist != bvp_label_dist:
+        print("   ⚠️  WARNING: Label distributions differ! Possible label mapping mismatch.")
+    else:
+        print("   ✅ Label distributions match!")
+    
     # Map clips to subjects and labels
     clip_to_subject = {}
     clip_to_label = {}
@@ -1116,10 +1129,31 @@ def create_clip_based_split(eeg_clip_names, eeg_y, eeg_subjects, bvp_clip_names,
         val_clips = [clip for subj in val_subjects for clip in subject_to_clips[subj]]
         test_clips = [clip for subj in test_subjects for clip in subject_to_clips[subj]]
     
+    # ✅ FIX ISSUE #5: Check class balance after filtering
     print(f"\n📋 Split Summary:")
     print(f"   Train clips: {len(train_clips)}")
     print(f"   Val clips: {len(val_clips)}")
     print(f"   Test clips: {len(test_clips)}")
+    
+    train_labels = [clip_to_label[clip] for clip in train_clips]
+    val_labels = [clip_to_label[clip] for clip in val_clips]
+    test_labels = [clip_to_label[clip] for clip in test_clips]
+    
+    print(f"\n📊 Class Distribution After Split:")
+    print(f"   Train: {Counter(train_labels)}")
+    print(f"   Val: {Counter(val_labels)}")
+    print(f"   Test: {Counter(test_labels)}")
+    
+    # Check for severe imbalance
+    train_counts = Counter(train_labels)
+    if train_counts:
+        max_count = max(train_counts.values())
+        min_count = min(train_counts.values())
+        imbalance_ratio = max_count / max(min_count, 1)
+        if imbalance_ratio > 3.0:
+            print(f"   ⚠️  WARNING: Severe class imbalance detected (ratio: {imbalance_ratio:.1f}:1)")
+        else:
+            print(f"   ✅ Reasonable class balance (ratio: {imbalance_ratio:.1f}:1)")
     
     return {
         'train_clips': train_clips,
@@ -1524,8 +1558,17 @@ def main():
     print("PREPARING ENCODERS FOR FUSION")
     print("="*80)
     
-    # Standardize EEG features using training statistics
-    eeg_X_features = (eeg_X_features - eeg_mu) / eeg_sd
+    # ⚠️ IMPORTANT: Re-extracting and standardizing EEG features for fusion
+    eeg_X_features_fusion = eeg_X_features.copy()
+    
+    # Apply standardization ONLY to fusion data (not double-standardize)
+    train_indices = eeg_split_indices['train']
+    mu_fusion = eeg_X_features_fusion[train_indices].mean(axis=0, keepdims=True)
+    sd_fusion = eeg_X_features_fusion[train_indices].std(axis=0, keepdims=True) + 1e-6
+    
+    eeg_X_features_fusion = (eeg_X_features_fusion - mu_fusion) / sd_fusion
+    
+    print(f"✅ EEG features standardized once: mean={eeg_X_features_fusion.mean():.4f}, std={eeg_X_features_fusion.std():.4f}")
     
     # Create EEG encoder (remove classifier, freeze weights)
     eeg_encoder = SimpleBiLSTMClassifier(
@@ -1567,7 +1610,7 @@ def main():
     
     # Step 7: Train fusion model
     fusion_model = train_fusion_model(
-        eeg_X_features, eeg_y, eeg_clip_names,
+        eeg_X_features_fusion, eeg_y, eeg_clip_names,
         bvp_X_raw, bvp_y, bvp_clip_names,
         eeg_split_indices, bvp_split_indices,
         eeg_encoder, bvp_encoder
