@@ -1,11 +1,13 @@
 """
-    Preprocessed EEG-Only Emotion Recognition (Standalone Test)
-    ============================================================
+    EEG-Only Emotion Recognition Pipeline
+    ======================================
     
-    This is a 100% EXACT copy of the EEG training code from BR_WithPP_FourEmotionsEEG.py
-    Used to verify that preprocessed EEG training works identically before adding fusion.
-    
-    Dataset: /kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR
+    This script contains a complete EEG emotion recognition pipeline with:
+    - Preprocessed EEG data loading (MUSE headband)
+    - Baseline reduction (InvBase method)
+    - Feature extraction (26 features per channel)
+    - BiLSTM classifier with attention
+    - Subject-independent or subject-dependent splits
     
     Author: Final Year Project
     Date: 2026
@@ -19,37 +21,28 @@ from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
-import pywt
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, TensorDataset, WeightedRandomSampler
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
-from sklearn.model_selection import GroupShuffleSplit, StratifiedShuffleSplit
-from sklearn.metrics import f1_score, classification_report, confusion_matrix
+from sklearn.metrics import f1_score, classification_report
 from scipy.stats import skew, kurtosis
-from scipy.signal import butter, filtfilt, find_peaks, medfilt
 
 
 # ==================================================
-# CONFIGURATION (100% SAME AS BR_WithPP_FourEmotionsEEG.py)
+# CONFIGURATION
 # ==================================================
 
 class Config:
-    """Shared configuration for all models."""
+    """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"  # Preprocessed dataset
+    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
     
     # Common parameters
     NUM_CLASSES = 4
     SEED = 42
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Classification Mode
-    USE_DUAL_BINARY = False
-    CLASSIFY_WHOLE_CLIPS = False
-    CLIP_AGGREGATION_METHOD = "mean"
     
     # Baseline reduction (InvBase method)
     USE_BASELINE_REDUCTION = True
@@ -58,34 +51,25 @@ class Config:
     SUBJECT_INDEPENDENT = True
     CLIP_INDEPENDENT = False
     
-    # LOSO Cross-Validation
-    USE_LOSO = False
-    LOSO_SAVE_ALL_FOLDS = True
-    
     # Stratified split parameters
     USE_STRATIFIED_GROUP_SPLIT = True
     MIN_SAMPLES_PER_CLASS = 10
     
-    # Label mappings (4-class system)
+    # Label mappings (4-class emotion quadrants)
     SUPERCLASS_MAP = {
-        "ENTHUSIASM": "Q1",
-        "FEAR": "Q2",
-        "SADNESS": "Q3",
-        "NEUTRAL": "Q4",
+        "ENTHUSIASM": "Q1",  # Positive + High Arousal
+        "FEAR": "Q2",         # Negative + High Arousal
+        "SADNESS": "Q3",      # Negative + Low Arousal
+        "NEUTRAL": "Q4",      # Positive + Low Arousal
     }
     
     SUPERCLASS_ID = {"Q1": 0, "Q2": 1, "Q3": 2, "Q4": 3}
-    IDX_TO_LABEL = ["Q1_Positive_Active", "Q2_Negative_Active", "Q3_Negative_Calm", "Q4_Positive_Calm"]
-    
-    # Dual Binary Classification Mappings
-    AROUSAL_MAP = {0: 1, 1: 1, 2: 0, 3: 0}
-    VALENCE_MAP = {0: 1, 1: 0, 2: 0, 3: 1}
-    AROUSAL_LABELS = ["Low_Arousal", "High_Arousal"]
-    VALENCE_LABELS = ["Negative_Valence", "Positive_Valence"]
+    IDX_TO_LABEL = ["Q1_Positive_Active", "Q2_Negative_Active", 
+                    "Q3_Negative_Calm", "Q4_Positive_Calm"]
     
     # EEG parameters
     EEG_FS = 256.0
-    EEG_CHANNELS = 4
+    EEG_CHANNELS = 4  # TP9, AF7, AF8, TP10
     EEG_FEATURES = 26
     EEG_WINDOW_SEC = 10.0
     EEG_OVERLAP = 0.5 if CLIP_INDEPENDENT else 0.0
@@ -93,19 +77,15 @@ class Config:
     EEG_EPOCHS = 200 if CLIP_INDEPENDENT else 150
     EEG_LR = 5e-4 if CLIP_INDEPENDENT else 1e-3
     EEG_PATIENCE = 30 if CLIP_INDEPENDENT else 20
-    EEG_CHECKPOINT = "best_eeg_pp_only.pt"
+    EEG_CHECKPOINT = "best_eeg_model.pt"
     
     # Augmentation settings
     USE_MIXUP = CLIP_INDEPENDENT
-    USE_LABEL_SMOOTHING = CLIP_INDEPENDENT
     LABEL_SMOOTHING = 0.1 if CLIP_INDEPENDENT else 0.0
     
-    # File outputs
-    SPLIT_FILE = "data_split_indices.npz"
-    
-    # Frequency bands for EEG
+    # Frequency bands for feature extraction
     BANDS = [("delta", (1, 3)), ("theta", (4, 7)), ("alpha", (8, 13)), 
-            ("beta", (14, 30)), ("gamma", (31, 45))]
+             ("beta", (14, 30)), ("gamma", (31, 45))]
 
 
 # Global config instance
@@ -121,7 +101,7 @@ print(f"Device: {config.DEVICE}")
 
 
 # ==================================================
-# PART 1: DATA LOADING & PREPROCESSING
+# DATA LOADING & PREPROCESSING
 # ==================================================
 
 def _to_num(x):
@@ -148,10 +128,38 @@ def _interp_nan(a):
     return a
 
 
-def load_preprocessed_eeg_data(data_root):
-    """Load preprocessed EEG data from JSON files."""
+def apply_baseline_reduction(signal, baseline, eps=1e-12):
+    """
+    Apply InvBase method: divide trial FFT by baseline FFT.
+    
+    This reduces inter-subject variability by normalizing against 
+    each subject's resting state baseline.
+    
+    Args:
+        signal: (T, C) - trial signal
+        baseline: (T, C) - baseline signal (same length)
+        eps: small constant to prevent division by zero
+    
+    Returns:
+        reduced_signal: (T, C) - baseline-reduced signal in time domain
+    """
+    # Compute FFT for each channel
+    FFT_trial = np.fft.rfft(signal, axis=0)
+    FFT_baseline = np.fft.rfft(baseline, axis=0)
+    
+    # InvBase: divide trial by baseline (element-wise per channel)
+    FFT_reduced = FFT_trial / (np.abs(FFT_baseline) + eps)
+    
+    # Convert back to time domain
+    signal_reduced = np.fft.irfft(FFT_reduced, n=len(signal), axis=0)
+    
+    return signal_reduced.astype(np.float32)
+
+
+def load_eeg_data(data_root):
+    """Load EEG data from MUSE files with optional baseline reduction."""
     print("\n" + "="*80)
-    print("LOADING PREPROCESSED EEG DATA")
+    print("LOADING EEG DATA (MUSE)")
     print("="*80)
     
     # Search for preprocessed JSON files
@@ -160,46 +168,80 @@ def load_preprocessed_eeg_data(data_root):
         os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned.json"),
         os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned", "*_STIMULUS_MUSE_cleaned.json")
     ]
-    
     files = sorted({p for pat in patterns for p in glob.glob(pat)})
-    print(f"Found {len(files)} preprocessed files")
+    print(f"Found {len(files)} MUSE files")
     
     if len(files) == 0:
-        print("\n❌ ERROR: No preprocessed files found!")
+        print("\n❌ ERROR: No MUSE files found!")
         print(f"   Searched in: {data_root}")
-        print(f"\n   Expected pattern: *_STIMULUS_MUSE_cleaned.json")
-        
-        # Debug: show what's in the directory
         if os.path.exists(data_root):
-            print(f"\n   Directory exists. Contents:")
-            contents = os.listdir(data_root)[:10]
-            for item in contents:
-                print(f"      {item}")
-            
-            # Check subdirectories
-            subdirs = [d for d in os.listdir(data_root) if os.path.isdir(os.path.join(data_root, d))]
-            if subdirs:
-                print(f"\n   Found {len(subdirs)} subdirectories. First one:")
-                first_subdir = os.path.join(data_root, subdirs[0])
-                subdir_contents = os.listdir(first_subdir)[:10]
-                for item in subdir_contents:
-                    print(f"      {item}")
-        else:
-            print(f"   ❌ Directory does not exist!")
-        
-        raise ValueError("No preprocessed files found. Please check DATA_ROOT path.")
+            print(f"   Directory contents: {os.listdir(data_root)[:10]}")
+        raise ValueError("No MUSE files found. Check DATA_ROOT path.")
     
     print(f"\n📁 Sample files:")
     for f in files[:3]:
         print(f"   {os.path.basename(f)}")
     
-    all_windows = []
-    all_labels = []
-    all_subjects = []
+    # Load baseline files for each subject
+    baseline_dict = {}
+    if config.USE_BASELINE_REDUCTION:
+        print(f"\n🔧 Baseline Reduction: ENABLED")
+        print("   Loading baseline recordings...")
+        
+        for fpath in files:
+            fname = os.path.basename(fpath)
+            parts = fname.split("_")
+            
+            if len(parts) < 2:
+                continue
+            
+            subject = parts[0]
+            
+            # Skip if already loaded or if this IS a baseline file
+            if subject in baseline_dict or "BASELINE" in fname:
+                continue
+            
+            # Try to find baseline file
+            baseline_patterns = [
+                os.path.join(data_root, f"{subject}_BASELINE_STIMULUS_MUSE.json"),
+                os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE.json"),
+                os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE_cleaned", 
+                           f"{subject}_BASELINE_STIMULUS_MUSE_cleaned.json")
+            ]
+            
+            for baseline_path in baseline_patterns:
+                if os.path.exists(baseline_path):
+                    try:
+                        with open(baseline_path, "r") as f:
+                            data = json.load(f)
+                        
+                        # Extract baseline channels
+                        tp9 = _interp_nan(_to_num(data.get("RAW_TP9", [])))
+                        af7 = _interp_nan(_to_num(data.get("RAW_AF7", [])))
+                        af8 = _interp_nan(_to_num(data.get("RAW_AF8", [])))
+                        tp10 = _interp_nan(_to_num(data.get("RAW_TP10", [])))
+                        
+                        L = min(len(tp9), len(af7), len(af8), len(tp10))
+                        if L > 0:
+                            baseline_signal = np.stack([tp9[:L], af7[:L], af8[:L], tp10[:L]], axis=1)
+                            baseline_signal = baseline_signal - np.nanmean(baseline_signal, axis=0, keepdims=True)
+                            baseline_dict[subject] = baseline_signal
+                            
+                    except Exception as e:
+                        print(f"   ⚠️  Failed to load baseline for {subject}: {e}")
+                    break
+        
+        print(f"   ✅ Loaded {len(baseline_dict)} baseline recordings")
+    else:
+        print(f"\n🔧 Baseline Reduction: DISABLED")
     
+    all_windows, all_labels, all_subjects = [], [], []
     win_samples = int(config.EEG_WINDOW_SEC * config.EEG_FS)
     step_samples = int(win_samples * (1.0 - config.EEG_OVERLAP))
     
+    # Track statistics
+    reduced_count = 0
+    not_reduced_count = 0
     skipped_reasons = {
         'baseline_file': 0,
         'unknown_emotion': 0,
@@ -216,11 +258,11 @@ def load_preprocessed_eeg_data(data_root):
             skipped_reasons['parse_error'] += 1
             continue
         
-        # Skip baseline files
+        # Skip baseline files themselves
         if "BASELINE" in fname:
             skipped_reasons['baseline_file'] += 1
             continue
-        
+            
         subject = parts[0]
         emotion = parts[1].upper()
         
@@ -229,7 +271,6 @@ def load_preprocessed_eeg_data(data_root):
             continue
         
         superclass = config.SUPERCLASS_MAP[emotion]
-        label_id = config.SUPERCLASS_ID[superclass]
         
         try:
             with open(fpath, "r") as f:
@@ -242,30 +283,64 @@ def load_preprocessed_eeg_data(data_root):
             tp10 = _interp_nan(_to_num(data.get("RAW_TP10", [])))
             
             L = min(len(tp9), len(af7), len(af8), len(tp10))
-            
             if L == 0:
                 skipped_reasons['no_data'] += 1
                 continue
             
+            # Quality filtering
+            hsi_tp9 = _to_num(data.get("HSI_TP9", []))[:L]
+            hsi_af7 = _to_num(data.get("HSI_AF7", []))[:L]
+            hsi_af8 = _to_num(data.get("HSI_AF8", []))[:L]
+            hsi_tp10 = _to_num(data.get("HSI_TP10", []))[:L]
+            head_on = _to_num(data.get("HeadBandOn", []))[:L]
+            
+            mask = np.isfinite(tp9[:L]) & np.isfinite(af7[:L]) & np.isfinite(af8[:L]) & np.isfinite(tp10[:L])
+            if len(head_on) == L and len(hsi_tp9) == L:
+                quality_mask = (
+                    (head_on == 1) &
+                    np.isfinite(hsi_tp9) & (hsi_tp9 <= 2) &
+                    np.isfinite(hsi_af7) & (hsi_af7 <= 2) &
+                    np.isfinite(hsi_af8) & (hsi_af8 <= 2) &
+                    np.isfinite(hsi_tp10) & (hsi_tp10 <= 2)
+                )
+                mask = mask & quality_mask
+            
+            tp9, af7, af8, tp10 = tp9[:L][mask], af7[:L][mask], af8[:L][mask], tp10[:L][mask]
+            L = len(tp9)
             if L < win_samples:
                 skipped_reasons['insufficient_length'] += 1
                 continue
             
-            # Stack channels
-            signal = np.stack([tp9[:L], af7[:L], af8[:L], tp10[:L]], axis=1)  # (T, 4)
+            signal = np.stack([tp9, af7, af8, tp10], axis=1)  # (T, 4)
             signal = signal - np.nanmean(signal, axis=0, keepdims=True)
             
-            # Create sliding windows
+            # Apply baseline reduction if available
+            if config.USE_BASELINE_REDUCTION and subject in baseline_dict:
+                baseline_signal = baseline_dict[subject]
+                
+                # Match lengths
+                common_len = min(len(signal), len(baseline_signal))
+                signal_trim = signal[:common_len]
+                baseline_trim = baseline_signal[:common_len]
+                
+                # Apply InvBase method
+                signal = apply_baseline_reduction(signal_trim, baseline_trim)
+                L = len(signal)
+                
+                reduced_count += 1
+            else:
+                not_reduced_count += 1
+            
+            # Create windows
             for start in range(0, L - win_samples + 1, step_samples):
                 window = signal[start:start + win_samples]
                 if len(window) == win_samples:
                     all_windows.append(window)
-                    all_labels.append(label_id)
+                    all_labels.append(superclass)
                     all_subjects.append(subject)
         
         except Exception as e:
             skipped_reasons['parse_error'] += 1
-            print(f"   ⚠️ Error processing {fname}: {e}")
             continue
     
     # Print statistics
@@ -279,22 +354,26 @@ def load_preprocessed_eeg_data(data_root):
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
-        print("\n💡 Troubleshooting:")
-        print("   1. Check that files contain RAW_TP9, RAW_AF7, RAW_AF8, RAW_TP10 fields")
-        print("   2. Verify emotion names match SUPERCLASS_MAP")
-        print("   3. Ensure signals are long enough (≥10 seconds)")
-        print(f"\n   Expected emotions: {list(config.SUPERCLASS_MAP.keys())}")
         raise ValueError("No valid EEG data extracted.")
     
     X_raw = np.stack(all_windows).astype(np.float32)
-    y_labels = np.array(all_labels, dtype=np.int64)
-    subjects = np.array(all_subjects)
+    unique_labels = sorted(list(set(all_labels)))
+    label_to_id = {lab: i for i, lab in enumerate(unique_labels)}
+    y_labels = np.array([label_to_id[lab] for lab in all_labels], dtype=np.int64)
+    subject_ids = np.array(all_subjects)
     
     print(f"\n✅ EEG data loaded: {X_raw.shape}")
-    print(f"   Subjects: {len(set(subjects))}")
     print(f"   Label distribution: {Counter(all_labels)}")
     
-    return X_raw, y_labels, subjects
+    if config.USE_BASELINE_REDUCTION:
+        total_files = reduced_count + not_reduced_count
+        print(f"\n📊 Baseline Reduction Statistics:")
+        print(f"   ✅ Files with baseline reduction: {reduced_count}")
+        print(f"   ⚠️  Files without baseline: {not_reduced_count}")
+        if total_files > 0:
+            print(f"   📈 Reduction rate: {100*reduced_count/total_files:.1f}%")
+    
+    return X_raw, y_labels, subject_ids, label_to_id
 
 
 def extract_eeg_features(X_raw, fs=256.0, eps=1e-12):
@@ -382,7 +461,7 @@ def extract_eeg_features(X_raw, fs=256.0, eps=1e-12):
 
 
 # ==================================================
-# PART 2: MODEL ARCHITECTURE
+# MODEL ARCHITECTURE
 # ==================================================
 
 class SimpleBiLSTMClassifier(nn.Module):
@@ -453,7 +532,7 @@ class SimpleBiLSTMClassifier(nn.Module):
 
 
 # ==================================================
-# PART 3: TRAINING FUNCTIONS
+# TRAINING FUNCTIONS
 # ==================================================
 
 def mixup_data(x, y, alpha=0.2):
@@ -544,7 +623,7 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
         for xb, yb in tr_loader:
             xb, yb = xb.to(config.DEVICE), yb.to(config.DEVICE)
             
-            if np.random.rand() < 0.5:
+            if config.USE_MIXUP and np.random.rand() < 0.5:
                 xb_mix, ya, yb_m, lam = mixup_data(xb, yb, alpha=0.2)
                 optimizer.zero_grad()
                 logits = model(xb_mix)
@@ -630,22 +709,24 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
 # ==================================================
 
 def main():
-    """EEG-only training pipeline."""
+    """EEG-only emotion recognition pipeline."""
     print("=" * 80)
-    print("PREPROCESSED EEG-ONLY EMOTION RECOGNITION")
+    print("EEG-ONLY EMOTION RECOGNITION PIPELINE")
     print("=" * 80)
     print(f"Dataset: {config.DATA_ROOT}")
     print(f"Mode: {'Subject-Independent' if config.SUBJECT_INDEPENDENT else 'Subject-Dependent'}")
     print(f"Baseline Reduction: {config.USE_BASELINE_REDUCTION}")
     print("=" * 80)
     
-    # Step 1: Load data
-    eeg_X_raw, eeg_y, eeg_subjects = load_preprocessed_eeg_data(config.DATA_ROOT)
+    # Step 1: Load EEG data
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT)
+    
+    # Step 2: Extract features
     eeg_X_features = extract_eeg_features(eeg_X_raw)
     
-    # Step 2: Create splits
+    # Step 3: Create data splits
     print("\n" + "="*80)
-    print("CREATING EEG DATA SPLIT")
+    print("CREATING DATA SPLIT")
     print("="*80)
     
     if config.SUBJECT_INDEPENDENT:
@@ -680,22 +761,22 @@ def main():
         val_mask[indices[n_test:n_test+n_val]] = True
         train_mask[indices[n_test+n_val:]] = True
     
-    eeg_split_indices = {
+    split_indices = {
         'train': np.where(train_mask)[0],
         'val': np.where(val_mask)[0],
         'test': np.where(test_mask)[0]
     }
     
     print(f"\n📋 Split Summary:")
-    print(f"   Train samples: {len(eeg_split_indices['train'])}")
-    print(f"   Val samples: {len(eeg_split_indices['val'])}")
-    print(f"   Test samples: {len(eeg_split_indices['test'])}")
+    print(f"   Train samples: {len(split_indices['train'])}")
+    print(f"   Val samples: {len(split_indices['val'])}")
+    print(f"   Test samples: {len(split_indices['test'])}")
     
-    # Step 3: Train EEG model
-    eeg_model, eeg_mu, eeg_sd = train_eeg_model(eeg_X_features, eeg_y, eeg_split_indices, config.SUPERCLASS_ID)
+    # Step 4: Train EEG model
+    eeg_model, eeg_mu, eeg_sd = train_eeg_model(eeg_X_features, eeg_y, split_indices, eeg_label_map)
     
     print("\n" + "=" * 80)
-    print("🎉 EEG TRAINING COMPLETE! 🎉")
+    print("🎉 EEG PIPELINE COMPLETE! 🎉")
     print("=" * 80)
     print(f"✅ Model saved: {config.EEG_CHECKPOINT}")
     print("=" * 80)
