@@ -70,7 +70,7 @@ class Config:
     # ==================== EEG PARAMETERS ====================
     EEG_FS = 256.0  # Sampling frequency (Hz)
     EEG_CHANNELS = 4  # TP9, AF7, AF8, TP10
-    EEG_FEATURES = 26  # Features per channel
+    EEG_FEATURES = 24  # Features per channel (8 time + 5 PSD + 5 DE + 6 temporal)
     EEG_WINDOW_SEC = 10.0  # Window length (seconds)
     EEG_OVERLAP = 0.5 if CLIP_INDEPENDENT else 0.0
     
