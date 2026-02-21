@@ -46,7 +46,6 @@ from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from scipy.stats import skew, kurtosis
 from scipy.signal import butter, filtfilt, find_peaks, medfilt
 
-
 # ==================================================
 # CONFIGURATION
 # ==================================================
@@ -54,7 +53,7 @@ from scipy.signal import butter, filtfilt, find_peaks, medfilt
 class Config:
     """Shared configuration for all models."""
     # Paths
-    DATA_ROOT = "/kaggle/input/emognition"  # Change this to your data path
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"  # Change this to your data path
     
     # Common parameters
     NUM_CLASSES = 4  # Changed from 5 to 4 (removed BASELINE)
@@ -97,15 +96,15 @@ class Config:
         # "DISGUST": "Q4",
         
         # Q3: Negative Valence + Low Arousal (Sad, Depressed, Bored)
-        # "SADNESS": "Q3",
-        "SURPRISE": "Q3",  # Surprise can be negative/low arousal
+        "SADNESS": "Q3",
+        # "SURPRISE": "Q3",  # Surprise can be negative/low arousal
         
         # Q4: Positive Valence + Low Arousal (Calm, Content, Peaceful)
-        "LIKING": "Q4",
+        # "LIKING": "Q4",
         
         # BASELINE and NEUTRAL removed - they are not emotions!
         # "BASELINE": None,
-        # "NEUTRAL": "Q4",
+        "NEUTRAL": "Q4",
     }
     
     SUPERCLASS_ID = {"Q1": 0, "Q2": 1, "Q3": 2, "Q4": 3}
@@ -246,6 +245,7 @@ def load_eeg_data(data_root):
     # FIXED: Added pattern for nested folder structure
     patterns = [
         os.path.join(data_root, "*_STIMULUS_MUSE.json"),
+        # os.path.join(data_root, subject, "*_STIMULUS_MUSE.json"),
         os.path.join(data_root, "*", "*_STIMULUS_MUSE.json")
         # os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned", "*_STIMULUS_MUSE_cleaned.json")  # NEW: nested folder
     ]
@@ -302,6 +302,7 @@ def load_eeg_data(data_root):
             # Try to find baseline file - FIXED: added nested folder pattern
             baseline_patterns = [
                 os.path.join(data_root, f"{subject}_BASELINE_STIMULUS_MUSE.json"),
+                os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE.json"),
                 os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE.json"),
                 os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE_cleaned", f"{subject}_BASELINE_STIMULUS_MUSE_cleaned.json")  # NEW
             ]
@@ -370,7 +371,7 @@ def load_eeg_data(data_root):
         
         if emotion not in config.SUPERCLASS_MAP:
             skipped_reasons['unknown_emotion'] += 1
-            print(f"   ⚠️  Skipping unknown emotion: {emotion} (file: {fname})")
+            # print(f"   ⚠️  Skipping unknown emotion: {emotion} (file: {fname})")
             continue
         superclass = config.SUPERCLASS_MAP[emotion]
         
