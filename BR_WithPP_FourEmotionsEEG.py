@@ -370,7 +370,7 @@ def load_eeg_data(data_root):
         
         if emotion not in config.SUPERCLASS_MAP:
             skipped_reasons['unknown_emotion'] += 1
-            # print(f"   ⚠️  Skipping unknown emotion: {emotion} (file: {fname})")
+            print(f"   ⚠️  Skipping unknown emotion: {emotion} (file: {fname})")
             continue
         superclass = config.SUPERCLASS_MAP[emotion]
         
