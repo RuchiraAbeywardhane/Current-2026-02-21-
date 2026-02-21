@@ -10,29 +10,117 @@ Usage:
 import os
 import numpy as np
 import pandas as pd
+import json
 from pathlib import Path
 from collections import defaultdict, Counter
 from config import config
 from preprocessing import preprocess_bvp, extract_bvp_features, moving_average_backward
 
 
-def load_eeg_data(data_root, use_baseline_reduction=True):
+def _to_num(x):
+    """Convert to numeric array."""
+    if isinstance(x, list):
+        if not x:
+            return np.array([], np.float64)
+        if isinstance(x[0], str):
+            return pd.to_numeric(pd.Series(x), errors="coerce").to_numpy(np.float64)
+        return np.asarray(x, np.float64)
+    return np.asarray([x], np.float64)
+
+
+def _interp_nan(a):
+    """Interpolate NaN values."""
+    a = a.astype(np.float64, copy=True)
+    m = np.isfinite(a)
+    if m.all():
+        return a
+    if not m.any():
+        return np.zeros_like(a)
+    idx = np.arange(len(a))
+    a[~m] = np.interp(idx[~m], idx[m], a[m])
+    return a
+
+
+def extract_eeg_features_from_signal(signal, fs=256.0):
     """
-    Load preprocessed EEG data from disk.
+    Extract features from raw EEG signal.
     
     Args:
-        data_root (str): Path to EEG data directory
+        signal (np.ndarray): Raw EEG signal
+        fs (float): Sampling frequency
+    
+    Returns:
+        np.ndarray: Feature vector (26 features)
+    """
+    from scipy.signal import welch
+    from scipy.stats import skew, kurtosis
+    
+    features = []
+    
+    # Time domain features
+    features.append(np.mean(signal))
+    features.append(np.std(signal))
+    features.append(np.var(signal))
+    features.append(skew(signal))
+    features.append(kurtosis(signal))
+    features.append(np.max(signal))
+    features.append(np.min(signal))
+    features.append(np.ptp(signal))  # Peak-to-peak
+    
+    # Frequency domain features (PSD for each band)
+    freqs, psd = welch(signal, fs=fs, nperseg=min(256, len(signal)))
+    
+    bands = [
+        (1, 3),    # delta
+        (4, 7),    # theta
+        (8, 13),   # alpha
+        (14, 30),  # beta
+        (31, 45)   # gamma
+    ]
+    
+    for low, high in bands:
+        idx = (freqs >= low) & (freqs <= high)
+        band_power = np.sum(psd[idx])
+        features.append(band_power)
+    
+    # Differential Entropy (DE) for each band
+    for low, high in bands:
+        idx = (freqs >= low) & (freqs <= high)
+        band_psd = psd[idx]
+        if len(band_psd) > 0 and np.sum(band_psd) > 0:
+            de = 0.5 * np.log(2 * np.pi * np.e * np.mean(band_psd))
+        else:
+            de = 0.0
+        features.append(de)
+    
+    # Additional temporal features
+    features.append(np.median(signal))
+    features.append(np.percentile(signal, 25))
+    features.append(np.percentile(signal, 75))
+    features.append(np.sum(np.abs(np.diff(signal))))  # Total variation
+    features.append(np.mean(np.abs(np.diff(signal))))  # Mean absolute difference
+    features.append(np.sum(np.diff(np.sign(signal)) != 0))  # Zero crossings
+    
+    return np.array(features, dtype=np.float32)
+
+
+def load_eeg_data(data_root, use_baseline_reduction=True):
+    """
+    Load preprocessed EEG data from JSON files.
+    
+    Args:
+        data_root (str): Path to EEG data directory containing *_STIMULUS_MUSE_cleaned.json files
         use_baseline_reduction (bool): Whether baseline reduction was applied
     
     Returns:
         tuple: (features, labels, clip_names, subjects)
-            features (np.ndarray): EEG features (N, C, dx)
+            features (np.ndarray): EEG features (N, C, dx) where C=4 channels, dx=26 features
             labels (np.ndarray): Label IDs (N,)
             clip_names (np.ndarray): Clip identifiers (N,)
             subjects (np.ndarray): Subject IDs (N,)
     """
     print(f"\n{'='*80}")
-    print(f"LOADING EEG DATA")
+    print(f"LOADING EEG DATA FROM JSON FILES")
     print(f"{'='*80}")
     print(f"Data root: {data_root}")
     print(f"Baseline reduction: {use_baseline_reduction}")
@@ -41,38 +129,191 @@ def load_eeg_data(data_root, use_baseline_reduction=True):
     if not data_path.exists():
         raise FileNotFoundError(f"EEG data directory not found: {data_root}")
     
+    # Search for JSON files with multiple patterns
+    print(f"\n🔍 Searching for EEG JSON files...")
+    search_patterns = [
+        "*_STIMULUS_MUSE_cleaned.json",
+        "*_STIMULUS_MUSE.json",
+        "**/*_STIMULUS_MUSE_cleaned.json",
+        "**/*_STIMULUS_MUSE.json"
+    ]
+    
+    json_files = []
+    for pattern in search_patterns:
+        found = list(data_path.glob(pattern))
+        json_files.extend(found)
+        if found:
+            print(f"   Pattern '{pattern}': Found {len(found)} files")
+    
+    # Remove duplicates
+    json_files = sorted(set(json_files))
+    
+    print(f"\n📊 Total unique JSON files found: {len(json_files)}")
+    
+    if len(json_files) == 0:
+        raise FileNotFoundError(
+            f"No EEG JSON files found in {data_root}\n"
+            f"Expected files like: *_STIMULUS_MUSE_cleaned.json or *_STIMULUS_MUSE.json"
+        )
+    
+    # Show first few files
+    print(f"   Sample files:")
+    for f in json_files[:5]:
+        print(f"      {f.name}")
+    
     all_features = []
     all_labels = []
     all_clip_names = []
     all_subjects = []
     
-    # Iterate through subject directories
-    for subject_dir in sorted(data_path.iterdir()):
-        if not subject_dir.is_dir():
+    fs = config.EEG_FS
+    window_sec = config.EEG_WINDOW_SEC
+    window_size = int(window_sec * fs)
+    overlap = config.EEG_OVERLAP
+    stride = int(window_size * (1 - overlap))
+    
+    files_processed = 0
+    files_skipped = 0
+    
+    for json_file in json_files:
+        fname = json_file.name
+        
+        # Skip BASELINE files
+        if "BASELINE" in fname.upper():
+            files_skipped += 1
             continue
         
-        subject_id = subject_dir.name
+        # Parse filename: expected format like "s01_ENTHUSIASM_STIMULUS_MUSE_cleaned.json"
+        parts = fname.replace("_STIMULUS_MUSE_cleaned.json", "").replace("_STIMULUS_MUSE.json", "").split("_")
         
-        # Load features and metadata
-        for file_path in sorted(subject_dir.glob("*.npz")):
-            data = np.load(file_path)
+        if len(parts) < 2:
+            print(f"   ⚠️  Skipping file with unexpected name format: {fname}")
+            files_skipped += 1
+            continue
+        
+        subject = parts[0]
+        emotion = parts[1].upper()
+        
+        # Map emotion to label
+        superclass = config.SUPERCLASS_MAP.get(emotion)
+        if superclass is None:
+            print(f"   ⚠️  Unknown emotion '{emotion}' in file: {fname}")
+            files_skipped += 1
+            continue
+        
+        label = config.SUPERCLASS_ID[superclass]
+        
+        try:
+            # Load JSON file
+            with open(json_file, "r") as f:
+                data = json.load(f)
             
-            features = data['features']  # (N, C, dx)
-            labels = data['labels']  # (N,)
-            clip_name = file_path.stem  # e.g., "s01_ENTHUSIASM_1"
+            # Extract EEG channels
+            tp9 = _interp_nan(_to_num(data.get("RAW_TP9", [])))
+            af7 = _interp_nan(_to_num(data.get("RAW_AF7", [])))
+            af8 = _interp_nan(_to_num(data.get("RAW_AF8", [])))
+            tp10 = _interp_nan(_to_num(data.get("RAW_TP10", [])))
             
-            all_features.append(features)
-            all_labels.append(labels)
-            all_clip_names.extend([clip_name] * len(features))
-            all_subjects.extend([subject_id] * len(features))
+            # Get minimum length
+            L = min(len(tp9), len(af7), len(af8), len(tp10))
+            
+            if L < window_size:
+                files_skipped += 1
+                continue
+            
+            # Truncate to same length
+            tp9 = tp9[:L]
+            af7 = af7[:L]
+            af8 = af8[:L]
+            tp10 = tp10[:L]
+            
+            # Quality filtering (if available)
+            if 'HSI_TP9' in data and 'HeadBandOn' in data:
+                hsi_tp9 = _to_num(data.get("HSI_TP9", []))[:L]
+                hsi_af7 = _to_num(data.get("HSI_AF7", []))[:L]
+                hsi_af8 = _to_num(data.get("HSI_AF8", []))[:L]
+                hsi_tp10 = _to_num(data.get("HSI_TP10", []))[:L]
+                head_on = _to_num(data.get("HeadBandOn", []))[:L]
+                
+                quality_mask = (
+                    (head_on == 1) &
+                    np.isfinite(hsi_tp9) & (hsi_tp9 <= 2) &
+                    np.isfinite(hsi_af7) & (hsi_af7 <= 2) &
+                    np.isfinite(hsi_af8) & (hsi_af8 <= 2) &
+                    np.isfinite(hsi_tp10) & (hsi_tp10 <= 2)
+                )
+                
+                tp9 = tp9[quality_mask]
+                af7 = af7[quality_mask]
+                af8 = af8[quality_mask]
+                tp10 = tp10[quality_mask]
+            
+            L_clean = len(tp9)
+            
+            if L_clean < window_size:
+                files_skipped += 1
+                continue
+            
+            # Create sliding windows
+            num_windows = (L_clean - window_size) // stride + 1
+            
+            for i in range(num_windows):
+                start = i * stride
+                end = start + window_size
+                
+                if end > L_clean:
+                    break
+                
+                # Extract window for each channel
+                tp9_win = tp9[start:end]
+                af7_win = af7[start:end]
+                af8_win = af8[start:end]
+                tp10_win = tp10[start:end]
+                
+                # Extract features for each channel
+                tp9_feats = extract_eeg_features_from_signal(tp9_win, fs)
+                af7_feats = extract_eeg_features_from_signal(af7_win, fs)
+                af8_feats = extract_eeg_features_from_signal(af8_win, fs)
+                tp10_feats = extract_eeg_features_from_signal(tp10_win, fs)
+                
+                # Stack features: shape (4, 26)
+                window_features = np.stack([tp9_feats, af7_feats, af8_feats, tp10_feats], axis=0)
+                
+                all_features.append(window_features)
+                all_labels.append(label)
+                all_clip_names.append(f"{subject}_{emotion}")
+                all_subjects.append(subject)
+            
+            files_processed += 1
+            
+            if files_processed % 50 == 0:
+                print(f"   Processed {files_processed}/{len(json_files)} files...")
+        
+        except Exception as e:
+            print(f"   ⚠️  Error loading {fname}: {e}")
+            files_skipped += 1
+            continue
     
-    # Concatenate all data
-    features = np.concatenate(all_features, axis=0)
-    labels = np.concatenate(all_labels, axis=0)
+    print(f"\n📊 Loading Summary:")
+    print(f"   Files processed: {files_processed}")
+    print(f"   Files skipped: {files_skipped}")
+    print(f"   Total windows extracted: {len(all_features)}")
+    
+    if len(all_features) == 0:
+        raise ValueError(
+            "No EEG data was loaded! Check:\n"
+            "  1. JSON files contain RAW_TP9, RAW_AF7, RAW_AF8, RAW_TP10 keys\n"
+            "  2. Signals are long enough for windowing\n"
+            "  3. Emotion names match SUPERCLASS_MAP in config.py"
+        )
+    
+    # Convert to arrays
+    features = np.array(all_features, dtype=np.float32)  # (N, 4, 26)
+    labels = np.array(all_labels, dtype=np.int64)
     clip_names = np.array(all_clip_names)
     subjects = np.array(all_subjects)
     
-    print(f"\n📊 Loaded EEG Data:")
+    print(f"\n✅ Loaded EEG Data Successfully:")
     print(f"   Total windows: {len(features)}")
     print(f"   Feature shape: {features.shape}")
     print(f"   Unique clips: {len(np.unique(clip_names))}")
