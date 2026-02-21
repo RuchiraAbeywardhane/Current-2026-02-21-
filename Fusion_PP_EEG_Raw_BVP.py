@@ -929,11 +929,31 @@ class MultimodalEEGBVPDataset(Dataset):
 
 
 # ==================================================
-# PART 4: TRAINING FUNCTIONS (simplified versions)
+# PART 4: TRAINING FUNCTIONS
 # ==================================================
 
+def mixup_data(x, y, alpha=0.2):
+    """Mixup data augmentation."""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+    mixed_x = lam * x + (1 - lam) * x[index]
+    y_a, y_b = y, y[index]
+    
+    return mixed_x, y_a, y_b, lam
+
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """Mixup loss."""
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+
 def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
-    """Train EEG BiLSTM model on preprocessed data."""
+    """Train EEG BiLSTM model on preprocessed data - EXACT SAME CODE as BR_WithPP_FourEmotionsEEG.py"""
     print("\n" + "="*80)
     print("TRAINING EEG MODEL (PREPROCESSED DATA)")
     print("="*80)
@@ -954,7 +974,6 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
     
     print(f"Train: {Xtr.shape}, Val: {Xva.shape}, Test: {Xte.shape}")
     
-    # ...existing training code...
     # Balanced sampling
     class_counts = np.bincount(ytr, minlength=config.NUM_CLASSES).astype(np.float32)
     class_sample_weights = 1.0 / np.clip(class_counts, 1.0, None)
@@ -967,6 +986,7 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
         replacement=True
     )
     
+    # Data loaders
     tr_ds = TensorDataset(torch.from_numpy(Xtr), torch.from_numpy(ytr))
     va_ds = TensorDataset(torch.from_numpy(Xva), torch.from_numpy(yva))
     te_ds = TensorDataset(torch.from_numpy(Xte), torch.from_numpy(yte))
@@ -975,6 +995,7 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
     va_loader = DataLoader(va_ds, batch_size=256, shuffle=False)
     te_loader = DataLoader(te_ds, batch_size=256, shuffle=False)
     
+    # Model
     model = SimpleBiLSTMClassifier(
         dx=26, n_channels=4, hidden=256, layers=3,
         n_classes=config.NUM_CLASSES, p_drop=0.4
@@ -984,9 +1005,11 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.EEG_LR, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    
     class_weights = torch.from_numpy(class_sample_weights).float().to(config.DEVICE)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     
+    # Training loop
     best_f1, best_state, wait = 0.0, None, 0
     
     for epoch in range(1, config.EEG_EPOCHS + 1):
@@ -996,13 +1019,23 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
         
         for xb, yb in tr_loader:
             xb, yb = xb.to(config.DEVICE), yb.to(config.DEVICE)
-            optimizer.zero_grad()
-            logits = model(xb)
-            loss = criterion(logits, yb)
+            
+            # RESTORED: Mixup augmentation (50% chance)
+            if np.random.rand() < 0.5:
+                xb_mix, ya, yb_m, lam = mixup_data(xb, yb, alpha=0.2)
+                optimizer.zero_grad()
+                logits = model(xb_mix)
+                loss = mixup_criterion(criterion, logits, ya, yb_m, lam)
+            else:
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+            
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
+            
             train_loss += loss.item()
             n_batches += 1
         
@@ -1068,271 +1101,7 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
     
     return model, mu, sd
 
-
-def train_bvp_model(X_raw, y_labels, split_indices, label_mapping):
-    """Train BVP EMCNN model on raw data."""
-    print("\n" + "="*80)
-    print("TRAINING BVP MODEL (RAW DATA)")
-    print("="*80)
-    
-    train_idx = split_indices['train']
-    val_idx = split_indices['val']
-    test_idx = split_indices['test']
-    
-    train_ds = BVPDataset(X_raw[train_idx], y_labels[train_idx])
-    val_ds = BVPDataset(X_raw[val_idx], y_labels[val_idx])
-    test_ds = BVPDataset(X_raw[test_idx], y_labels[test_idx])
-    
-    print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
-    
-    train_labels = y_labels[train_idx]
-    class_counts = np.bincount(train_labels, minlength=config.NUM_CLASSES).astype(np.float32)
-    class_sample_weights = 1.0 / np.clip(class_counts, 1.0, None)
-    sample_weights = class_sample_weights[train_labels]
-    sample_weights_tensor = torch.from_numpy(sample_weights.astype(np.float32))
-    
-    train_sampler = WeightedRandomSampler(
-        weights=sample_weights_tensor,
-        num_samples=len(sample_weights_tensor),
-        replacement=True
-    )
-    
-    train_loader = DataLoader(train_ds, batch_size=config.BVP_BATCH_SIZE, sampler=train_sampler)
-    val_loader = DataLoader(val_ds, batch_size=config.BVP_BATCH_SIZE, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=config.BVP_BATCH_SIZE, shuffle=False)
-    
-    model = EMCNN(n_classes=config.NUM_CLASSES, feat_dim=5).to(config.DEVICE)
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
-    class_weights = torch.from_numpy(class_sample_weights).float().to(config.DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.BVP_LR, weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    
-    best_val_acc = 0.0
-    wait = 0
-    
-    for epoch in range(1, config.BVP_EPOCHS + 1):
-        model.train()
-        correct = total_samples = 0
-        
-        for x1, x2, x3, feats, y in train_loader:
-            x1, x2, x3, feats, y = x1.to(config.DEVICE), x2.to(config.DEVICE), x3.to(config.DEVICE), feats.to(config.DEVICE), y.to(config.DEVICE)
-            optimizer.zero_grad()
-            out = model(x1, x2, x3, feats)
-            loss = criterion(out, y)
-            loss.backward()
-            optimizer.step()
-            correct += (out.argmax(1) == y).sum().item()
-            total_samples += y.size(0)
-        
-        train_acc = correct / total_samples
-        
-        model.eval()
-        correct = total_samples = 0
-        with torch.no_grad():
-            for x1, x2, x3, feats, y in val_loader:
-                x1, x2, x3, feats, y = x1.to(config.DEVICE), x2.to(config.DEVICE), x3.to(config.DEVICE), feats.to(config.DEVICE), y.to(config.DEVICE)
-                out = model(x1, x2, x3, feats)
-                correct += (out.argmax(1) == y).sum().item()
-                total_samples += y.size(0)
-        
-        val_acc = correct / total_samples
-        
-        if epoch % 5 == 0:
-            print(f"Epoch {epoch:03d} | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
-        
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            wait = 0
-            torch.save(model.state_dict(), config.BVP_CHECKPOINT)
-        else:
-            wait += 1
-            if wait >= config.BVP_PATIENCE:
-                print(f"Early stopping at epoch {epoch}")
-                break
-    
-    model.load_state_dict(torch.load(config.BVP_CHECKPOINT, map_location=config.DEVICE))
-    model.eval()
-    
-    all_preds, all_labels = [], []
-    with torch.no_grad():
-        for x1, x2, x3, feats, y in test_loader:
-            x1, x2, x3, feats = x1.to(config.DEVICE), x2.to(config.DEVICE), x3.to(config.DEVICE), feats.to(config.DEVICE)
-            out = model(x1, x2, x3, feats)
-            all_preds.append(out.argmax(1).cpu().numpy())
-            all_labels.append(y.numpy())
-    
-    all_preds = np.concatenate(all_preds)
-    all_labels = np.concatenate(all_labels)
-    test_acc = (all_preds == all_labels).mean()
-    test_f1 = f1_score(all_labels, all_preds, average='macro')
-    
-    print("\n" + "="*80)
-    print("BVP TEST RESULTS (RAW)")
-    print("="*80)
-    print(f"Test Accuracy: {test_acc:.3f} ({test_acc*100:.1f}%)")
-    print(f"Test Macro-F1: {test_f1:.3f}")
-    id2lab = {v: k for k, v in label_mapping.items()}
-    print("\nClassification Report:")
-    print(classification_report(all_labels, all_preds,
-                                target_names=[id2lab[i] for i in range(config.NUM_CLASSES)],
-                                digits=3, zero_division=0))
-    
-    return model
-
-
-def train_fusion_model(eeg_X_features, eeg_y, eeg_clip_names, bvp_X_raw, bvp_y, bvp_clip_names, 
-                       eeg_split_indices, bvp_split_indices, eeg_encoder, bvp_encoder):
-    """Train hybrid fusion model."""
-    print("\n" + "="*80)
-    print("TRAINING HYBRID FUSION MODEL")
-    print("="*80)
-    print("Combining: Preprocessed EEG + Raw BVP")
-    
-    eeg_train_idx = eeg_split_indices['train']
-    eeg_val_idx = eeg_split_indices['val']
-    eeg_test_idx = eeg_split_indices['test']
-    
-    bvp_train_idx = bvp_split_indices['train']
-    bvp_val_idx = bvp_split_indices['val']
-    bvp_test_idx = bvp_split_indices['test']
-    
-    train_dataset = MultimodalEEGBVPDataset(
-        eeg_X=[eeg_X_features[i] for i in eeg_train_idx],
-        eeg_y=[eeg_y[i] for i in eeg_train_idx],
-        eeg_clip_ids=[eeg_clip_names[i] for i in eeg_train_idx],
-        bvp_X=[bvp_X_raw[i] for i in bvp_train_idx],
-        bvp_clip_ids=[bvp_clip_names[i] for i in bvp_train_idx]
-    )
-    
-    val_dataset = MultimodalEEGBVPDataset(
-        eeg_X=[eeg_X_features[i] for i in eeg_val_idx],
-        eeg_y=[eeg_y[i] for i in eeg_val_idx],
-        eeg_clip_ids=[eeg_clip_names[i] for i in eeg_val_idx],
-        bvp_X=[bvp_X_raw[i] for i in bvp_val_idx],
-        bvp_clip_ids=[bvp_clip_names[i] for i in bvp_val_idx]
-    )
-    
-    test_dataset = MultimodalEEGBVPDataset(
-        eeg_X=[eeg_X_features[i] for i in eeg_test_idx],
-        eeg_y=[eeg_y[i] for i in eeg_test_idx],
-        eeg_clip_ids=[eeg_clip_names[i] for i in eeg_test_idx],
-        bvp_X=[bvp_X_raw[i] for i in bvp_test_idx],
-        bvp_clip_ids=[bvp_clip_names[i] for i in bvp_test_idx]
-    )
-    
-    train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
-    train_labels = np.array(train_labels)
-    
-    class_counts = np.bincount(train_labels, minlength=config.NUM_CLASSES).astype(np.float32)
-    class_sample_weights = 1.0 / np.clip(class_counts, 1.0, None)
-    sample_weights = class_sample_weights[train_labels]
-    sample_weights_tensor = torch.from_numpy(sample_weights.astype(np.float32))
-    
-    train_sampler = WeightedRandomSampler(
-        weights=sample_weights_tensor,
-        num_samples=len(sample_weights_tensor),
-        replacement=True
-    )
-    
-    train_loader = DataLoader(train_dataset, batch_size=config.FUSION_BATCH_SIZE, sampler=train_sampler, drop_last=True)
-    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
-    
-    fusion_model = WindowFusionEEGBVP(
-        eeg_encoder=eeg_encoder,
-        bvp_encoder=bvp_encoder,
-        n_classes=config.NUM_CLASSES,
-        shared_dim=config.FUSION_SHARED_DIM,
-        num_heads=config.FUSION_NUM_HEADS,
-        dropout=config.FUSION_DROPOUT
-    ).to(config.DEVICE)
-    
-    trainable_params = sum(p.numel() for p in fusion_model.parameters() if p.requires_grad)
-    print(f"Fusion model trainable parameters: {trainable_params:,}")
-    
-    class_weights = torch.from_numpy(class_sample_weights).float().to(config.DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.AdamW(fusion_model.parameters(), lr=config.FUSION_LR)
-    
-    best_val_acc = 0.0
-    patience_counter = 0
-    
-    for epoch in range(1, config.FUSION_EPOCHS + 1):
-        fusion_model.train()
-        train_loss = 0.0
-
-        for eeg_x, bvp_x, y in train_loader:
-            eeg_x = eeg_x.to(config.DEVICE)
-            bvp_x = tuple(v.to(config.DEVICE) for v in bvp_x)
-            y = y.to(config.DEVICE)
-
-            optimizer.zero_grad()
-            out = fusion_model(eeg_x, bvp_x)
-            loss = criterion(out, y)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-
-        train_loss /= len(train_loader)
-
-        fusion_model.eval()
-        correct = total = 0
-        with torch.no_grad():
-            for eeg_x, bvp_x, y in val_loader:
-                eeg_x = eeg_x.to(config.DEVICE)
-                bvp_x = tuple(v.to(config.DEVICE) for v in bvp_x)
-                y = y.to(config.DEVICE)
-                out = fusion_model(eeg_x, bvp_x)
-                correct += (out.argmax(1) == y).sum().item()
-                total += y.size(0)
-
-        val_acc = correct / total
-        if epoch % 5 == 0:
-            print(f"Epoch {epoch:03d} | Train loss {train_loss:.4f} | Val acc {val_acc:.4f}")
-
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            patience_counter = 0
-            torch.save(fusion_model.state_dict(), config.FUSION_CHECKPOINT)
-        else:
-            patience_counter += 1
-            if patience_counter >= config.FUSION_PATIENCE:
-                print(f"Early stopping at epoch {epoch}")
-                break
-    
-    fusion_model.load_state_dict(torch.load(config.FUSION_CHECKPOINT, map_location=config.DEVICE))
-    fusion_model.eval()
-
-    correct = total = 0
-    all_preds, all_labels = [], []
-
-    with torch.no_grad():
-        for eeg_x, bvp_x, y in test_loader:
-            eeg_x = eeg_x.to(config.DEVICE)
-            bvp_x = tuple(v.to(config.DEVICE) for v in bvp_x)
-            y = y.to(config.DEVICE)
-            out = fusion_model(eeg_x, bvp_x)
-            preds = out.argmax(1)
-            correct += (preds == y).sum().item()
-            total += y.size(0)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(y.cpu().numpy())
-
-    test_acc = correct / total
-    test_f1 = f1_score(all_labels, all_preds, average='macro')
-    
-    print("\n" + "="*80)
-    print("HYBRID FUSION TEST RESULTS")
-    print("="*80)
-    print(f"Test Accuracy: {test_acc:.3f} ({test_acc*100:.1f}%)")
-    print(f"Test Macro-F1: {test_f1:.3f}")
-    print("\nClassification Report:")
-    print(classification_report(all_labels, all_preds, 
-                                target_names=config.IDX_TO_LABEL,
-                                digits=3, zero_division=0))
-    
-    return fusion_model
+# ...existing code for train_bvp_model and train_fusion_model...
 
 
 # ==================================================
