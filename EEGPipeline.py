@@ -25,18 +25,18 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from sklearn.metrics import f1_score, classification_report
 
 # # Import data loading functions from separate module
-from eeg_data_loader import (
-    load_eeg_data,
-    extract_eeg_features,
-    create_data_splits
-)
-
-# Import data loading functions from separate module
-# from eeg_data_loader_emognitionRaw import (
+# from eeg_data_loader import (
 #     load_eeg_data,
 #     extract_eeg_features,
-#     create_data_splits,
+#     create_data_splits
 # )
+
+# Import data loading functions from separate module
+from eeg_data_loader_emognitionRaw import (
+    load_eeg_data,
+    extract_eeg_features,
+    create_data_splits,
+)
 
 # ==================================================
 # CONFIGURATION
@@ -45,8 +45,8 @@ from eeg_data_loader import (
 class Config:
     """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
-    # DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
+    # DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
     
     # Common parameters
     NUM_CLASSES = 4
@@ -54,7 +54,7 @@ class Config:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Baseline reduction (InvBase method)
-    USE_BASELINE_REDUCTION = False
+    USE_BASELINE_REDUCTION = True
     
     # Data split mode
     SUBJECT_INDEPENDENT = True
