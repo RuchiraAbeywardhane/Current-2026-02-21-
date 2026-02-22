@@ -40,7 +40,7 @@ from eeg_trainer import train_eeg_model
 class Config:
     """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-output/ASR_output"
     
     # Common parameters
     NUM_CLASSES = 4
