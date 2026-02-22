@@ -90,7 +90,8 @@ class Config:
     EEG_CHECKPOINT = "best_eeg_model.pt"
     
     # Augmentation settings
-    USE_MIXUP = CLIP_INDEPENDENT
+    USE_MIXUP = False  # Set to True to enable Mixup data augmentation
+    MIXUP_ALPHA = 0.2  # Mixup interpolation strength (only used if USE_MIXUP=True)
     LABEL_SMOOTHING = 0.1 if CLIP_INDEPENDENT else 0.0
     
     # Frequency bands for feature extraction
@@ -210,6 +211,10 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
     print("\n" + "="*80)
     print("TRAINING EEG MODEL")
     print("="*80)
+    print(f"Mixup Augmentation: {'ENABLED' if config.USE_MIXUP else 'DISABLED'}")
+    if config.USE_MIXUP:
+        print(f"Mixup Alpha: {config.MIXUP_ALPHA}")
+    print("="*80)
     
     train_idx = split_indices['train']
     val_idx = split_indices['val']
@@ -273,8 +278,9 @@ def train_eeg_model(X_features, y_labels, split_indices, label_mapping):
         for xb, yb in tr_loader:
             xb, yb = xb.to(config.DEVICE), yb.to(config.DEVICE)
             
-            if np.random.rand() < 0.5:
-                xb_mix, ya, yb_m, lam = mixup_data(xb, yb, alpha=0.2)
+            # Apply Mixup augmentation based on config flag
+            if config.USE_MIXUP and np.random.rand() < 0.5:
+                xb_mix, ya, yb_m, lam = mixup_data(xb, yb, alpha=config.MIXUP_ALPHA)
                 optimizer.zero_grad()
                 logits = model(xb_mix)
                 loss = mixup_criterion(criterion, logits, ya, yb_m, lam)
@@ -397,7 +403,6 @@ def main():
     print("=" * 80)
     print(f"✅ Model saved: {config.EEG_CHECKPOINT}")
     print("=" * 80)
-
 
 if __name__ == "__main__":
     main()
