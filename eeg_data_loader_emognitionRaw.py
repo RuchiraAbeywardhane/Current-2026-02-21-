@@ -258,14 +258,14 @@ def load_eeg_data(data_root, config):
         label_to_id: Dictionary mapping label names to integers
     """
     print("\n" + "="*80)
-    print("LOADING EEG DATA (MUSE)")
+    print("LOADING EEG DATA (MUSE) - RAW DATASET")
     print("="*80)
     
-    # Search for preprocessed JSON files
+    # Search for RAW JSON files (without "_cleaned" suffix)
     patterns = [
-        os.path.join(data_root, "*_STIMULUS_MUSE_cleaned.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned", "*_STIMULUS_MUSE_cleaned.json")
+        os.path.join(data_root, "*_STIMULUS_MUSE.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_MUSE.json"),
+        os.path.join(data_root, "*", "*", "*_STIMULUS_MUSE.json")
     ]
     files = sorted({p for pat in patterns for p in glob.glob(pat)})
     print(f"Found {len(files)} MUSE files")
