@@ -226,16 +226,27 @@ def load_eeg_data(data_root, config):
                 data = json.load(f)
             
             # INSPECT: Sample a few files to understand structure
-            if file_idx < 5:  # First 5 files
-                json_structure_samples.append({
-                    'file': fname,
-                    'keys': list(data.keys())[:10],  # First 10 keys
-                    'total_keys': len(data.keys()),
-                    'raw_tp9_len': len(data.get("RAW_TP9", [])),
-                    'raw_af7_len': len(data.get("RAW_AF7", [])),
-                    'raw_af8_len': len(data.get("RAW_AF8", [])),
-                    'raw_tp10_len': len(data.get("RAW_TP10", []))
-                })
+            if file_idx < 5:
+                data_sample = data.get("data_uV", [])
+                if data_sample:
+                    data_arr = np.asarray(data_sample)
+                    json_structure_samples.append({
+                        'file': fname,
+                        'keys': list(data.keys()),
+                        'sampling_rate': data.get("sampling_rate"),
+                        'channels': data.get("channels"),
+                        'data_uv_shape': data_arr.shape,
+                        'data_uv_type': type(data_sample).__name__,
+                        'first_element_type': type(data_sample[0]).__name__ if data_sample else None,
+                        'data_sample_first_5': str(data_sample[:5]) if len(data_sample) > 0 else "empty"
+                    })
+                else:
+                    json_structure_samples.append({
+                        'file': fname,
+                        'keys': list(data.keys()),
+                        'data_uv': 'EMPTY',
+                        'data_uv_shape': (0,)
+                    })
             
             # Extract 4 EEG channels
             tp9 = _interp_nan(_to_num(data.get("RAW_TP9", [])))
@@ -355,11 +366,12 @@ def load_eeg_data(data_root, config):
         for sample in json_structure_samples:
             print(f"   File: {sample['file']}")
             print(f"      Keys: {sample['keys']}")
-            print(f"      Total keys: {sample['total_keys']}")
-            print(f"      RAW_TP9 length: {sample['raw_tp9_len']}")
-            print(f"      RAW_AF7 length: {sample['raw_af7_len']}")
-            print(f"      RAW_AF8 length: {sample['raw_af8_len']}")
-            print(f"      RAW_TP10 length: {sample['raw_tp10_len']}")
+            print(f"      Sampling rate: {sample.get('sampling_rate')}")
+            print(f"      Channels: {sample.get('channels')}")
+            print(f"      Data shape: {sample.get('data_uv_shape')}")
+            print(f"      Data type: {sample.get('data_uv_type')}")
+            print(f"      First element type: {sample.get('first_element_type')}")
+            print(f"      Data sample (first 5): {sample.get('data_sample_first_5')}")
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
@@ -569,14 +581,26 @@ def load_eeg_data_muse_structured(data_root, config):
             
             # INSPECT: Sample a few files to understand structure
             if file_idx < 5:
-                json_structure_samples.append({
-                    'file': fname,
-                    'keys': list(data.keys()),
-                    'total_keys': len(data.keys()),
-                    'sampling_rate': data.get("sampling_rate"),
-                    'channels': data.get("channels"),
-                    'data_uv_shape': np.asarray(data.get("data_uV", [])).shape
-                })
+                data_sample = data.get("data_uV", [])
+                if data_sample:
+                    data_arr = np.asarray(data_sample)
+                    json_structure_samples.append({
+                        'file': fname,
+                        'keys': list(data.keys()),
+                        'sampling_rate': data.get("sampling_rate"),
+                        'channels': data.get("channels"),
+                        'data_uv_shape': data_arr.shape,
+                        'data_uv_type': type(data_sample).__name__,
+                        'first_element_type': type(data_sample[0]).__name__ if data_sample else None,
+                        'data_sample_first_5': str(data_sample[:5]) if len(data_sample) > 0 else "empty"
+                    })
+                else:
+                    json_structure_samples.append({
+                        'file': fname,
+                        'keys': list(data.keys()),
+                        'data_uv': 'EMPTY',
+                        'data_uv_shape': (0,)
+                    })
             
             # NEW STRUCTURE: Extract from data_uV array with channel metadata
             channels = data.get("channels", [])
@@ -717,6 +741,9 @@ def load_eeg_data_muse_structured(data_root, config):
             print(f"      Sampling rate: {sample['sampling_rate']}")
             print(f"      Channels: {sample['channels']}")
             print(f"      Data shape: {sample['data_uv_shape']}")
+            print(f"      Data type: {sample['data_uv_type']}")
+            print(f"      First element type: {sample['first_element_type']}")
+            print(f"      Data sample (first 5): {sample['data_sample_first_5']}")
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
