@@ -40,7 +40,7 @@ from eeg_trainer import train_eeg_model
 class Config:
     """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-output/ASR_output"
+    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
     
     # Common parameters
     NUM_CLASSES = 4
@@ -139,7 +139,7 @@ def main():
     
     # Step 1: Load EEG data
     # eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data_muse_structured(config.DATA_ROOT, config)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     
     # Step 2: Extract features
     eeg_X_features = extract_eeg_features(eeg_X_raw, config)
