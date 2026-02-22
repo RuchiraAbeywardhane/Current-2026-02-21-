@@ -24,7 +24,7 @@ import torch.nn as nn
 from sklearn.metrics import f1_score, classification_report
 
 # Import data loading utilities
-from eeg_dataloader import load_eeg_data, extract_eeg_features, prepare_eeg_dataloaders
+from eeg_dataloader import load_eeg_data, extract_eeg_features, prepare_eeg_dataloaders, load_eeg_data_muse_structured
 
 # Import model architecture
 from eeg_model import SimpleBiLSTMClassifier
