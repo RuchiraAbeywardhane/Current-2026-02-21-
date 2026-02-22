@@ -54,7 +54,7 @@ class Config:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Baseline reduction (InvBase method)
-    USE_BASELINE_REDUCTION = True
+    USE_BASELINE_REDUCTION = False
     
     # Data split mode
     SUBJECT_INDEPENDENT = True
@@ -89,7 +89,7 @@ class Config:
     EEG_CHECKPOINT = "best_eeg_model.pt"
     
     # Augmentation settings
-    USE_MIXUP = True  # Set to True to enable Mixup data augmentation
+    USE_MIXUP = False  # Set to True to enable Mixup data augmentation
     MIXUP_ALPHA = 0.2  # Mixup interpolation strength (only used if USE_MIXUP=True)
     LABEL_SMOOTHING = 0.1 if CLIP_INDEPENDENT else 0.0
     
