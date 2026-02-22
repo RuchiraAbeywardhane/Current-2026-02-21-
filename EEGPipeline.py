@@ -367,8 +367,8 @@ def main():
     print(f"Baseline Reduction: {config.USE_BASELINE_REDUCTION}")
     print("=" * 80)
     
-    # Check the JSON structure before loading data
-    check_json_structure(config.DATA_ROOT, num_samples=3)
+    # # Check the JSON structure before loading data
+    # check_json_structure(config.DATA_ROOT, num_samples=3)
 
     # Step 1: Load EEG data
     eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
