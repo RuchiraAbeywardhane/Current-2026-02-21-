@@ -197,8 +197,9 @@ def load_eeg_data(data_root, config):
     }
     
     debug_file_details = []
+    json_structure_samples = []  # Sample a few files to inspect structure
     
-    for fpath in files:
+    for file_idx, fpath in enumerate(files):
         fname = os.path.basename(fpath)
         parts = fname.split("_")
         
@@ -223,6 +224,18 @@ def load_eeg_data(data_root, config):
         try:
             with open(fpath, "r") as f:
                 data = json.load(f)
+            
+            # INSPECT: Sample a few files to understand structure
+            if file_idx < 5:  # First 5 files
+                json_structure_samples.append({
+                    'file': fname,
+                    'keys': list(data.keys())[:10],  # First 10 keys
+                    'total_keys': len(data.keys()),
+                    'raw_tp9_len': len(data.get("RAW_TP9", [])),
+                    'raw_af7_len': len(data.get("RAW_AF7", [])),
+                    'raw_af8_len': len(data.get("RAW_AF8", [])),
+                    'raw_tp10_len': len(data.get("RAW_TP10", []))
+                })
             
             # Extract 4 EEG channels
             tp9 = _interp_nan(_to_num(data.get("RAW_TP9", [])))
@@ -335,6 +348,18 @@ def load_eeg_data(data_root, config):
             elif detail['reason'] == 'insufficient_length':
                 print(f"   {detail['file']}: insufficient length")
                 print(f"      Got {detail['length']} samples, need {detail['required']}")
+    
+    # Print JSON structure samples
+    if json_structure_samples:
+        print(f"\n🔍 JSON Structure Samples (first 5 files):")
+        for sample in json_structure_samples:
+            print(f"   File: {sample['file']}")
+            print(f"      Keys: {sample['keys']}")
+            print(f"      Total keys: {sample['total_keys']}")
+            print(f"      RAW_TP9 length: {sample['raw_tp9_len']}")
+            print(f"      RAW_AF7 length: {sample['raw_af7_len']}")
+            print(f"      RAW_AF8 length: {sample['raw_af8_len']}")
+            print(f"      RAW_TP10 length: {sample['raw_tp10_len']}")
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
