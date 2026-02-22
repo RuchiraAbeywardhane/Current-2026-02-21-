@@ -62,27 +62,27 @@ class Config:
     SUPERCLASS_MAP = {
         # Positive + High Arousal (Q1)
         "ENTHUSIASM": "Q1",
-        "AMUSEMENT": "Q1",
-        "JOY": "Q1",
-        "EXCITEMENT": "Q1",
+        # "AMUSEMENT": "Q1",
+        # "JOY": "Q1",
+        # "EXCITEMENT": "Q1",
         
         # Negative + High Arousal (Q2)
         "FEAR": "Q2",
-        "ANGER": "Q2",
-        "DISGUST": "Q2",
-        "ANXIETY": "Q2",
+        # "ANGER": "Q2",
+        # "DISGUST": "Q2",
+        # "ANXIETY": "Q2",
         
         # Negative + Low Arousal (Q3)
         "SADNESS": "Q3",
-        "BOREDOM": "Q3",
-        "DEPRESSION": "Q3",
+        # "BOREDOM": "Q3",
+        # "DEPRESSION": "Q3",
         
         # Positive + Low Arousal (Q4)
         "NEUTRAL": "Q4",
-        "CALMNESS": "Q4",
-        "CONTENTMENT": "Q4",
-        "RELAXATION": "Q4",
-        "AWE": "Q4",  # Awe is typically low arousal, positive
+        # "CALMNESS": "Q4",
+        # "CONTENTMENT": "Q4",
+        # "RELAXATION": "Q4",
+        # "AWE": "Q4",  # Awe is typically low arousal, positive
     }
     
     SUPERCLASS_ID = {"Q1": 0, "Q2": 1, "Q3": 2, "Q4": 3}
