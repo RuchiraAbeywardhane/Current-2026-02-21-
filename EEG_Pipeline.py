@@ -175,7 +175,7 @@ def main():
     loaders, stats = prepare_eeg_dataloaders(eeg_X_features, eeg_y, split_indices, config)
     
     # Step 5: Train EEG model
-    eeg_model, loaders, stats = train_eeg_model(loaders, eeg_label_map, stats)
+    eeg_model, loaders, stats = train_eeg_model(loaders, eeg_label_map, config, stats)
     
     print("\n" + "=" * 80)
     print("🎉 EEG PIPELINE COMPLETE! 🎉")
