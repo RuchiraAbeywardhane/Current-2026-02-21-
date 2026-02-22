@@ -108,6 +108,25 @@ def load_eeg_data(data_root, config):
     for f in files[:3]:
         print(f"   {os.path.basename(f)}")
     
+    # DEBUG: Extract unique emotions from filenames
+    print(f"\n🔍 Analyzing file naming convention:")
+    emotions_found = set()
+    for fpath in files[:10]:  # Sample first 10 files
+        fname = os.path.basename(fpath)
+        parts = fname.split("_")
+        if len(parts) >= 2 and "BASELINE" not in fname:
+            emotions_found.add(parts[1])
+    
+    print(f"   Sample emotions found in filenames: {sorted(emotions_found)}")
+    print(f"   Expected emotions in SUPERCLASS_MAP: {sorted(config.SUPERCLASS_MAP.keys())}")
+    
+    # Check for mismatches
+    missing_in_config = emotions_found - set(config.SUPERCLASS_MAP.keys())
+    if missing_in_config:
+        print(f"\n   ⚠️  WARNING: Emotions in files but NOT in SUPERCLASS_MAP:")
+        for em in sorted(missing_in_config):
+            print(f"      - {em}")
+    
     # Load baseline files for each subject
     baseline_dict = {}
     if config.USE_BASELINE_REDUCTION:
@@ -280,6 +299,11 @@ def load_eeg_data(data_root, config):
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
+        print("\n💡 TROUBLESHOOTING STEPS:")
+        print("   1. Check that emotion names in files match SUPERCLASS_MAP")
+        print("   2. Verify DATA_ROOT path is correct")
+        print("   3. Check that JSON files contain RAW_TP9, RAW_AF7, RAW_AF8, RAW_TP10 keys")
+        print("   4. Ensure HeadBandOn and quality indicators (HSI_*) are present")
         raise ValueError("No valid EEG data extracted.")
     
     X_raw = np.stack(all_windows).astype(np.float32)
