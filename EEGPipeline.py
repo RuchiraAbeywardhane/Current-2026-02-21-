@@ -31,6 +31,8 @@ from eeg_data_loader import (
     create_data_splits
 )
 
+from eeg_data_loader_emognitionRaw import check_json_structure
+
 
 # ==================================================
 # CONFIGURATION
@@ -39,7 +41,7 @@ from eeg_data_loader import (
 class Config:
     """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
     
     # Common parameters
     NUM_CLASSES = 4
@@ -360,6 +362,9 @@ def main():
     print(f"Baseline Reduction: {config.USE_BASELINE_REDUCTION}")
     print("=" * 80)
     
+    # Check the JSON structure before loading data
+    check_json_structure(config.DATA_ROOT, num_samples=3)
+
     # Step 1: Load EEG data
     eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     
