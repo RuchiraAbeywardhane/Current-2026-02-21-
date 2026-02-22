@@ -346,10 +346,10 @@ def main():
     print("=" * 80)
     
     # Step 1: Load EEG data
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     
     # Step 2: Extract features
-    eeg_X_features = extract_eeg_features(eeg_X_raw)
+    eeg_X_features = extract_eeg_features(eeg_X_raw, config)
     
     # Step 3: Create data splits
     print("\n" + "="*80)
