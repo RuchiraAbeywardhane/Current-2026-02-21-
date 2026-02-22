@@ -24,15 +24,20 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
 from sklearn.metrics import f1_score, classification_report
 
+# # Import data loading functions from separate module
+# from eeg_data_loader import (
+#     load_eeg_data,
+#     extract_eeg_features,
+#     create_data_splits
+# )
+
 # Import data loading functions from separate module
-from eeg_data_loader import (
+from eeg_data_loader_emognitionRaw import (
     load_eeg_data,
     extract_eeg_features,
-    create_data_splits
+    create_data_splits,
+    check_json_structure
 )
-
-from eeg_data_loader_emognitionRaw import check_json_structure
-
 
 # ==================================================
 # CONFIGURATION
