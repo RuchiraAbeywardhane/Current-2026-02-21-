@@ -248,92 +248,73 @@ def load_eeg_data(data_root, config):
                         'data_uv_shape': (0,)
                     })
             
-            # Extract 4 EEG channels
-            tp9 = _interp_nan(_to_num(data.get("RAW_TP9", [])))
-            af7 = _interp_nan(_to_num(data.get("RAW_AF7", [])))
-            af8 = _interp_nan(_to_num(data.get("RAW_AF8", [])))
-            tp10 = _interp_nan(_to_num(data.get("RAW_TP10", [])))
+            # NEW STRUCTURE: data_uV is a list of epochs, each epoch has 4 channels
+            channels = data.get("channels", [])
+            data_uv = data.get("data_uV", [])
+            artifact_flags = data.get("artifact_flags", [])
             
-            L = min(len(tp9), len(af7), len(af8), len(tp10))
-            if L == 0:
+            if not data_uv or not channels:
                 skipped_reasons['no_data'] += 1
                 continue
             
-            # Quality filtering
-            hsi_tp9 = _to_num(data.get("HSI_TP9", []))[:L]
-            hsi_af7 = _to_num(data.get("HSI_AF7", []))[:L]
-            hsi_af8 = _to_num(data.get("HSI_AF8", []))[:L]
-            hsi_tp10 = _to_num(data.get("HSI_TP10", []))[:L]
-            head_on = _to_num(data.get("HeadBandOn", []))[:L]
-            
-            mask = np.isfinite(tp9[:L]) & np.isfinite(af7[:L]) & np.isfinite(af8[:L]) & np.isfinite(tp10[:L])
-            
-            # DEBUG: Check if quality indicators exist
-            has_quality_data = len(head_on) == L and len(hsi_tp9) == L and len(hsi_af7) == L and len(hsi_af8) == L and len(hsi_tp10) == L
-            
-            if has_quality_data:
-                # Apply quality filtering only if quality data is available
-                quality_mask = (
-                    (head_on == 1) &
-                    np.isfinite(hsi_tp9) & (hsi_tp9 <= 2) &
-                    np.isfinite(hsi_af7) & (hsi_af7 <= 2) &
-                    np.isfinite(hsi_af8) & (hsi_af8 <= 2) &
-                    np.isfinite(hsi_tp10) & (hsi_tp10 <= 2)
-                )
-                before_quality = np.sum(mask)
-                mask = mask & quality_mask
-                after_quality = np.sum(mask)
-                
-                if before_quality > 0 and after_quality == 0:
-                    skipped_reasons['quality_filtered'] += 1
-                    debug_file_details.append({
-                        'file': fname,
-                        'reason': 'quality_filtered',
-                        'before_quality': int(before_quality),
-                        'after_quality': int(after_quality),
-                        'head_on_mean': float(np.mean(head_on[np.isfinite(head_on)])) if np.any(np.isfinite(head_on)) else np.nan,
-                        'hsi_mean': float(np.mean([np.mean(h[np.isfinite(h)]) for h in [hsi_tp9, hsi_af7, hsi_af8, hsi_tp10] if np.any(np.isfinite(h))]))
-                    })
-            
-            tp9, af7, af8, tp10 = tp9[:L][mask], af7[:L][mask], af8[:L][mask], tp10[:L][mask]
-            L = len(tp9)
-            if L < win_samples:
-                skipped_reasons['insufficient_length'] += 1
-                debug_file_details.append({
-                    'file': fname,
-                    'reason': 'insufficient_length',
-                    'length': L,
-                    'required': win_samples
-                })
+            # data_uv is list of epochs: [epoch0, epoch1, epoch2, ...]
+            # Each epoch is: [channel0_samples, channel1_samples, channel2_samples, channel3_samples]
+            num_epochs = len(data_uv)
+            if num_epochs == 0:
+                skipped_reasons['no_data'] += 1
                 continue
             
-            signal = np.stack([tp9, af7, af8, tp10], axis=1)  # (T, 4)
-            signal = signal - np.nanmean(signal, axis=0, keepdims=True)
-            
-            # Apply baseline reduction if available
-            if config.USE_BASELINE_REDUCTION and subject in baseline_dict:
-                baseline_signal = baseline_dict[subject]
+            # Process each epoch separately
+            for epoch_idx in range(num_epochs):
+                epoch_data = data_uv[epoch_idx]
                 
-                # Match lengths
-                common_len = min(len(signal), len(baseline_signal))
-                signal_trim = signal[:common_len]
-                baseline_trim = baseline_signal[:common_len]
+                # Skip if this epoch has fewer than 4 channels
+                if len(epoch_data) < 4:
+                    continue
                 
-                # Apply InvBase method
-                signal = apply_baseline_reduction(signal_trim, baseline_trim)
-                L = len(signal)
+                try:
+                    # Extract 4 EEG channels from this epoch
+                    tp9 = _interp_nan(_to_num(epoch_data[0]))
+                    af7 = _interp_nan(_to_num(epoch_data[1]))
+                    af8 = _interp_nan(_to_num(epoch_data[2]))
+                    tp10 = _interp_nan(_to_num(epoch_data[3]))
+                except Exception:
+                    continue
                 
-                reduced_count += 1
-            else:
-                not_reduced_count += 1
-            
-            # Create windows
-            for start in range(0, L - win_samples + 1, step_samples):
-                window = signal[start:start + win_samples]
-                if len(window) == win_samples:
-                    all_windows.append(window)
-                    all_labels.append(superclass)
-                    all_subjects.append(subject)
+                L = min(len(tp9), len(af7), len(af8), len(tp10))
+                if L == 0:
+                    continue
+                
+                # Check artifact flag for this epoch
+                if epoch_idx < len(artifact_flags):
+                    if artifact_flags[epoch_idx]:  # True = artifact present
+                        skipped_reasons['quality_filtered'] += 1
+                        continue
+                
+                # All data is valid - use the full epoch as one window
+                signal = np.stack([tp9[:L], af7[:L], af8[:L], tp10[:L]], axis=1)
+                signal = signal - np.nanmean(signal, axis=0, keepdims=True)
+                
+                # Apply baseline reduction if available
+                if config.USE_BASELINE_REDUCTION and subject in baseline_dict:
+                    baseline_signal = baseline_dict[subject]
+                    
+                    # Match lengths
+                    common_len = min(len(signal), len(baseline_signal))
+                    signal_trim = signal[:common_len]
+                    baseline_trim = baseline_signal[:common_len]
+                    
+                    # Apply InvBase method
+                    signal = apply_baseline_reduction(signal_trim, baseline_trim)
+                    
+                    reduced_count += 1
+                else:
+                    not_reduced_count += 1
+                
+                # Use this epoch as a single window (don't subdivide)
+                all_windows.append(signal.astype(np.float32))
+                all_labels.append(superclass)
+                all_subjects.append(subject)
         
         except Exception as e:
             skipped_reasons['parse_error'] += 1
@@ -740,10 +721,10 @@ def load_eeg_data_muse_structured(data_root, config):
             print(f"      Keys: {sample['keys']}")
             print(f"      Sampling rate: {sample['sampling_rate']}")
             print(f"      Channels: {sample['channels']}")
-            print(f"      Data shape: {sample['data_uv_shape']}")
-            print(f"      Data type: {sample['data_uv_type']}")
-            print(f"      First element type: {sample['first_element_type']}")
-            print(f"      Data sample (first 5): {sample['data_sample_first_5']}")
+            print(f"      Data shape: {sample.get('data_uv_shape')}")
+            print(f"      Data type: {sample.get('data_uv_type')}")
+            print(f"      First element type: {sample.get('first_element_type')}")
+            print(f"      Data sample (first 5): {sample.get('data_sample_first_5')}")
     
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
