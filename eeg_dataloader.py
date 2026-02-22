@@ -391,6 +391,363 @@ def load_eeg_data(data_root, config):
     return X_raw, y_labels, subject_ids, label_to_id
 
 
+def load_eeg_data_muse_structured(data_root, config):
+    """
+    Load EEG data from MUSE files with NEW STRUCTURED FORMAT.
+    
+    This loader handles the new JSON structure:
+    - Keys: ['sampling_rate', 'channels', 'data_uV', 'artifact_flags']
+    - Data stored in 'data_uV' array with 'channels' metadata
+    
+    Args:
+        data_root: Path to dataset directory
+        config: Config object with settings
+    
+    Returns:
+        X_raw: (N, T, C) - raw EEG windows
+        y_labels: (N,) - class labels (0-3)
+        subject_ids: (N,) - subject identifiers
+        label_to_id: dict - mapping of superclass labels to IDs
+    """
+    print("\n" + "="*80)
+    print("LOADING EEG DATA (MUSE - STRUCTURED FORMAT)")
+    print("="*80)
+    
+    # Search for preprocessed JSON files
+    patterns = [
+        os.path.join(data_root, "*_STIMULUS_MUSE_cleaned.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_MUSE_cleaned", "*_STIMULUS_MUSE_cleaned.json")
+    ]
+    files = sorted({p for pat in patterns for p in glob.glob(pat)})
+    print(f"Found {len(files)} MUSE files")
+    
+    if len(files) == 0:
+        print("\n❌ ERROR: No MUSE files found!")
+        print(f"   Searched in: {data_root}")
+        if os.path.exists(data_root):
+            print(f"   Directory contents: {os.listdir(data_root)[:10]}")
+        raise ValueError("No MUSE files found. Check DATA_ROOT path.")
+    
+    print(f"\n📁 Sample files:")
+    for f in files[:3]:
+        print(f"   {os.path.basename(f)}")
+    
+    # DEBUG: Extract unique emotions from filenames
+    print(f"\n🔍 Analyzing file naming convention:")
+    emotions_found = set()
+    for fpath in files[:10]:  # Sample first 10 files
+        fname = os.path.basename(fpath)
+        parts = fname.split("_")
+        if len(parts) >= 2 and "BASELINE" not in fname:
+            emotions_found.add(parts[1])
+    
+    print(f"   Sample emotions found in filenames: {sorted(emotions_found)}")
+    print(f"   Expected emotions in SUPERCLASS_MAP: {sorted(config.SUPERCLASS_MAP.keys())}")
+    
+    # Check for mismatches
+    missing_in_config = emotions_found - set(config.SUPERCLASS_MAP.keys())
+    if missing_in_config:
+        print(f"\n   ⚠️  WARNING: Emotions in files but NOT in SUPERCLASS_MAP:")
+        for em in sorted(missing_in_config):
+            print(f"      - {em}")
+    
+    # Load baseline files for each subject
+    baseline_dict = {}
+    if config.USE_BASELINE_REDUCTION:
+        print(f"\n🔧 Baseline Reduction: ENABLED")
+        print("   Loading baseline recordings...")
+        
+        for fpath in files:
+            fname = os.path.basename(fpath)
+            parts = fname.split("_")
+            
+            if len(parts) < 2:
+                continue
+            
+            subject = parts[0]
+            
+            # Skip if already loaded or if this IS a baseline file
+            if subject in baseline_dict or "BASELINE" in fname:
+                continue
+            
+            # Try to find baseline file
+            baseline_patterns = [
+                os.path.join(data_root, f"{subject}_BASELINE_STIMULUS_MUSE_cleaned.json"),
+                os.path.join(data_root, subject, f"{subject}_BASELINE_STIMULUS_MUSE_cleaned.json"),
+            ]
+            
+            for baseline_path in baseline_patterns:
+                if os.path.exists(baseline_path):
+                    try:
+                        with open(baseline_path, "r") as f:
+                            baseline_data = json.load(f)
+                        
+                        # Extract baseline channels from new format
+                        channels = baseline_data.get("channels", [])
+                        data_uv = baseline_data.get("data_uV", [])
+                        
+                        if data_uv and channels:
+                            data_array = np.asarray(data_uv, dtype=np.float64)
+                            if data_array.ndim == 1:
+                                data_array = data_array.reshape(-1, 1)
+                            
+                            channel_names = [ch.upper().strip() for ch in channels]
+                            expected_channels = ['TP9', 'AF7', 'AF8', 'TP10']
+                            channel_indices = []
+                            for exp_ch in expected_channels:
+                                if exp_ch in channel_names:
+                                    channel_indices.append(channel_names.index(exp_ch))
+                                else:
+                                    if len(channel_indices) < len(expected_channels):
+                                        channel_indices.append(len(channel_indices))
+                            
+                            if len(channel_indices) == 4:
+                                tp9 = _interp_nan(data_array[:, channel_indices[0]])
+                                af7 = _interp_nan(data_array[:, channel_indices[1]])
+                                af8 = _interp_nan(data_array[:, channel_indices[2]])
+                                tp10 = _interp_nan(data_array[:, channel_indices[3]])
+                                
+                                L = min(len(tp9), len(af7), len(af8), len(tp10))
+                                if L > 0:
+                                    baseline_signal = np.stack([tp9[:L], af7[:L], af8[:L], tp10[:L]], axis=1)
+                                    baseline_signal = baseline_signal - np.nanmean(baseline_signal, axis=0, keepdims=True)
+                                    baseline_dict[subject] = baseline_signal
+                    
+                    except Exception as e:
+                        print(f"   ⚠️  Failed to load baseline for {subject}: {e}")
+                    break
+        
+        print(f"   ✅ Loaded {len(baseline_dict)} baseline recordings")
+    else:
+        print(f"\n🔧 Baseline Reduction: DISABLED")
+    
+    all_windows, all_labels, all_subjects = [], [], []
+    win_samples = int(config.EEG_WINDOW_SEC * config.EEG_FS)
+    step_samples = int(win_samples * (1.0 - config.EEG_OVERLAP))
+    
+    # Track statistics
+    reduced_count = 0
+    not_reduced_count = 0
+    skipped_reasons = {
+        'baseline_file': 0,
+        'unknown_emotion': 0,
+        'no_data': 0,
+        'insufficient_length': 0,
+        'parse_error': 0,
+        'quality_filtered': 0
+    }
+    
+    debug_file_details = []
+    json_structure_samples = []
+    
+    for file_idx, fpath in enumerate(files):
+        fname = os.path.basename(fpath)
+        parts = fname.split("_")
+        
+        if len(parts) < 2:
+            skipped_reasons['parse_error'] += 1
+            continue
+        
+        # Skip baseline files themselves
+        if "BASELINE" in fname:
+            skipped_reasons['baseline_file'] += 1
+            continue
+            
+        subject = parts[0]
+        emotion = parts[1].upper()
+        
+        if emotion not in config.SUPERCLASS_MAP:
+            skipped_reasons['unknown_emotion'] += 1
+            continue
+        
+        superclass = config.SUPERCLASS_MAP[emotion]
+        
+        try:
+            with open(fpath, "r") as f:
+                data = json.load(f)
+            
+            # INSPECT: Sample a few files to understand structure
+            if file_idx < 5:
+                json_structure_samples.append({
+                    'file': fname,
+                    'keys': list(data.keys()),
+                    'total_keys': len(data.keys()),
+                    'sampling_rate': data.get("sampling_rate"),
+                    'channels': data.get("channels"),
+                    'data_uv_shape': np.asarray(data.get("data_uV", [])).shape
+                })
+            
+            # NEW STRUCTURE: Extract from data_uV array with channel metadata
+            channels = data.get("channels", [])
+            data_uv = data.get("data_uV", [])
+            
+            if not data_uv or not channels:
+                skipped_reasons['no_data'] += 1
+                continue
+            
+            # Convert to numpy array: (T, C)
+            data_array = np.asarray(data_uv, dtype=np.float64)
+            if data_array.ndim == 1:
+                data_array = data_array.reshape(-1, 1)
+            
+            # Extract the 4 MUSE channels in order: TP9, AF7, AF8, TP10
+            channel_names = [ch.upper().strip() for ch in channels]
+            
+            expected_channels = ['TP9', 'AF7', 'AF8', 'TP10']
+            channel_indices = []
+            for exp_ch in expected_channels:
+                if exp_ch in channel_names:
+                    channel_indices.append(channel_names.index(exp_ch))
+                else:
+                    # If exact match not found, try to use channels in order
+                    if len(channel_indices) < len(expected_channels) and len(channel_indices) < data_array.shape[1]:
+                        channel_indices.append(len(channel_indices))
+            
+            if len(channel_indices) < 4 or data_array.shape[1] < 4:
+                skipped_reasons['no_data'] += 1
+                continue
+            
+            # Extract 4 EEG channels
+            try:
+                tp9 = _interp_nan(data_array[:, channel_indices[0]])
+                af7 = _interp_nan(data_array[:, channel_indices[1]])
+                af8 = _interp_nan(data_array[:, channel_indices[2]])
+                tp10 = _interp_nan(data_array[:, channel_indices[3]])
+            except Exception:
+                skipped_reasons['no_data'] += 1
+                continue
+            
+            L = min(len(tp9), len(af7), len(af8), len(tp10))
+            if L == 0:
+                skipped_reasons['no_data'] += 1
+                continue
+            
+            # Quality filtering using artifact_flags if available
+            artifact_flags = _to_num(data.get("artifact_flags", []))[:L]
+            
+            mask = np.isfinite(tp9[:L]) & np.isfinite(af7[:L]) & np.isfinite(af8[:L]) & np.isfinite(tp10[:L])
+            
+            # Apply artifact filtering if available
+            if len(artifact_flags) == L:
+                artifact_mask = (artifact_flags == 0)  # 0 = no artifact
+                before_artifact = np.sum(mask)
+                mask = mask & artifact_mask
+                after_artifact = np.sum(mask)
+                
+                if before_artifact > 0 and after_artifact == 0:
+                    skipped_reasons['quality_filtered'] += 1
+                    debug_file_details.append({
+                        'file': fname,
+                        'reason': 'artifact_filtered',
+                        'before_filter': int(before_artifact),
+                        'after_filter': int(after_artifact)
+                    })
+            
+            tp9, af7, af8, tp10 = tp9[:L][mask], af7[:L][mask], af8[:L][mask], tp10[:L][mask]
+            L = len(tp9)
+            if L < win_samples:
+                skipped_reasons['insufficient_length'] += 1
+                debug_file_details.append({
+                    'file': fname,
+                    'reason': 'insufficient_length',
+                    'length': L,
+                    'required': win_samples
+                })
+                continue
+            
+            signal = np.stack([tp9, af7, af8, tp10], axis=1)  # (T, 4)
+            signal = signal - np.nanmean(signal, axis=0, keepdims=True)
+            
+            # Apply baseline reduction if available
+            if config.USE_BASELINE_REDUCTION and subject in baseline_dict:
+                baseline_signal = baseline_dict[subject]
+                
+                # Match lengths
+                common_len = min(len(signal), len(baseline_signal))
+                signal_trim = signal[:common_len]
+                baseline_trim = baseline_signal[:common_len]
+                
+                # Apply InvBase method
+                signal = apply_baseline_reduction(signal_trim, baseline_trim)
+                L = len(signal)
+                
+                reduced_count += 1
+            else:
+                not_reduced_count += 1
+            
+            # Create windows
+            for start in range(0, L - win_samples + 1, step_samples):
+                window = signal[start:start + win_samples]
+                if len(window) == win_samples:
+                    all_windows.append(window)
+                    all_labels.append(superclass)
+                    all_subjects.append(subject)
+        
+        except Exception as e:
+            skipped_reasons['parse_error'] += 1
+            continue
+    
+    # Print statistics
+    print(f"\n📊 File Processing Summary:")
+    print(f"   Total files found: {len(files)}")
+    print(f"   Successfully processed: {len(all_windows)} windows")
+    print(f"\n   Skipped files:")
+    for reason, count in skipped_reasons.items():
+        if count > 0:
+            print(f"      {reason}: {count}")
+    
+    # Print detailed debug info if available
+    if debug_file_details:
+        print(f"\n🔍 Detailed filtering information (first 10 files):")
+        for detail in debug_file_details[:10]:
+            if detail['reason'] == 'artifact_filtered':
+                print(f"   {detail['file']}: artifact filtered")
+                print(f"      Before filter: {detail['before_filter']}, After: {detail['after_filter']}")
+            elif detail['reason'] == 'insufficient_length':
+                print(f"   {detail['file']}: insufficient length")
+                print(f"      Got {detail['length']} samples, need {detail['required']}")
+    
+    # Print JSON structure samples
+    if json_structure_samples:
+        print(f"\n🔍 JSON Structure Samples (first 5 files):")
+        for sample in json_structure_samples:
+            print(f"   File: {sample['file']}")
+            print(f"      Keys: {sample['keys']}")
+            print(f"      Sampling rate: {sample['sampling_rate']}")
+            print(f"      Channels: {sample['channels']}")
+            print(f"      Data shape: {sample['data_uv_shape']}")
+    
+    if len(all_windows) == 0:
+        print("\n❌ ERROR: No valid EEG windows extracted!")
+        print("\n💡 TROUBLESHOOTING STEPS:")
+        print("   1. Check that emotion names in files match SUPERCLASS_MAP")
+        print("   2. Verify DATA_ROOT path is correct")
+        print("   3. Check that JSON files contain 'data_uV' and 'channels' keys")
+        print("   4. Verify 'channels' contains ['TP9', 'AF7', 'AF8', 'TP10']")
+        print("   5. Check if insufficient_length count is high - window size may be too large")
+        raise ValueError("No valid EEG data extracted.")
+    
+    X_raw = np.stack(all_windows).astype(np.float32)
+    unique_labels = sorted(list(set(all_labels)))
+    label_to_id = {lab: i for i, lab in enumerate(unique_labels)}
+    y_labels = np.array([label_to_id[lab] for lab in all_labels], dtype=np.int64)
+    subject_ids = np.array(all_subjects)
+    
+    print(f"\n✅ EEG data loaded: {X_raw.shape}")
+    print(f"   Label distribution: {Counter(all_labels)}")
+    
+    if config.USE_BASELINE_REDUCTION:
+        total_files = reduced_count + not_reduced_count
+        print(f"\n📊 Baseline Reduction Statistics:")
+        print(f"   ✅ Files with baseline reduction: {reduced_count}")
+        print(f"   ⚠️  Files without baseline: {not_reduced_count}")
+        if total_files > 0:
+            print(f"   📈 Reduction rate: {100*reduced_count/total_files:.1f}%")
+    
+    return X_raw, y_labels, subject_ids, label_to_id
+
+
 def extract_eeg_features(X_raw, config, eps=1e-12):
     """Extract 26 features per channel from EEG windows."""
     print("Extracting EEG features (26 per channel)...")
