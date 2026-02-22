@@ -60,10 +60,29 @@ class Config:
     
     # Label mappings (4-class emotion quadrants)
     SUPERCLASS_MAP = {
-        "ENTHUSIASM": "Q1",  # Positive + High Arousal
-        "FEAR": "Q2",         # Negative + High Arousal
-        "SADNESS": "Q3",      # Negative + Low Arousal
-        "NEUTRAL": "Q4",      # Positive + Low Arousal
+        # Positive + High Arousal (Q1)
+        "ENTHUSIASM": "Q1",
+        "AMUSEMENT": "Q1",
+        "JOY": "Q1",
+        "EXCITEMENT": "Q1",
+        
+        # Negative + High Arousal (Q2)
+        "FEAR": "Q2",
+        "ANGER": "Q2",
+        "DISGUST": "Q2",
+        "ANXIETY": "Q2",
+        
+        # Negative + Low Arousal (Q3)
+        "SADNESS": "Q3",
+        "BOREDOM": "Q3",
+        "DEPRESSION": "Q3",
+        
+        # Positive + Low Arousal (Q4)
+        "NEUTRAL": "Q4",
+        "CALMNESS": "Q4",
+        "CONTENTMENT": "Q4",
+        "RELAXATION": "Q4",
+        "AWE": "Q4",  # Awe is typically low arousal, positive
     }
     
     SUPERCLASS_ID = {"Q1": 0, "Q2": 1, "Q3": 2, "Q4": 3}
