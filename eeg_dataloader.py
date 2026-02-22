@@ -192,8 +192,11 @@ def load_eeg_data(data_root, config):
         'unknown_emotion': 0,
         'no_data': 0,
         'insufficient_length': 0,
-        'parse_error': 0
+        'parse_error': 0,
+        'quality_filtered': 0
     }
+    
+    debug_file_details = []
     
     for fpath in files:
         fname = os.path.basename(fpath)
@@ -240,7 +243,12 @@ def load_eeg_data(data_root, config):
             head_on = _to_num(data.get("HeadBandOn", []))[:L]
             
             mask = np.isfinite(tp9[:L]) & np.isfinite(af7[:L]) & np.isfinite(af8[:L]) & np.isfinite(tp10[:L])
-            if len(head_on) == L and len(hsi_tp9) == L:
+            
+            # DEBUG: Check if quality indicators exist
+            has_quality_data = len(head_on) == L and len(hsi_tp9) == L and len(hsi_af7) == L and len(hsi_af8) == L and len(hsi_tp10) == L
+            
+            if has_quality_data:
+                # Apply quality filtering only if quality data is available
                 quality_mask = (
                     (head_on == 1) &
                     np.isfinite(hsi_tp9) & (hsi_tp9 <= 2) &
@@ -248,12 +256,31 @@ def load_eeg_data(data_root, config):
                     np.isfinite(hsi_af8) & (hsi_af8 <= 2) &
                     np.isfinite(hsi_tp10) & (hsi_tp10 <= 2)
                 )
+                before_quality = np.sum(mask)
                 mask = mask & quality_mask
+                after_quality = np.sum(mask)
+                
+                if before_quality > 0 and after_quality == 0:
+                    skipped_reasons['quality_filtered'] += 1
+                    debug_file_details.append({
+                        'file': fname,
+                        'reason': 'quality_filtered',
+                        'before_quality': int(before_quality),
+                        'after_quality': int(after_quality),
+                        'head_on_mean': float(np.mean(head_on[np.isfinite(head_on)])) if np.any(np.isfinite(head_on)) else np.nan,
+                        'hsi_mean': float(np.mean([np.mean(h[np.isfinite(h)]) for h in [hsi_tp9, hsi_af7, hsi_af8, hsi_tp10] if np.any(np.isfinite(h))]))
+                    })
             
             tp9, af7, af8, tp10 = tp9[:L][mask], af7[:L][mask], af8[:L][mask], tp10[:L][mask]
             L = len(tp9)
             if L < win_samples:
                 skipped_reasons['insufficient_length'] += 1
+                debug_file_details.append({
+                    'file': fname,
+                    'reason': 'insufficient_length',
+                    'length': L,
+                    'required': win_samples
+                })
                 continue
             
             signal = np.stack([tp9, af7, af8, tp10], axis=1)  # (T, 4)
@@ -297,6 +324,18 @@ def load_eeg_data(data_root, config):
         if count > 0:
             print(f"      {reason}: {count}")
     
+    # Print detailed debug info if available
+    if debug_file_details:
+        print(f"\n🔍 Detailed filtering information (first 10 files):")
+        for detail in debug_file_details[:10]:
+            if detail['reason'] == 'quality_filtered':
+                print(f"   {detail['file']}: quality filtered")
+                print(f"      Before quality: {detail['before_quality']}, After: {detail['after_quality']}")
+                print(f"      HeadBandOn mean: {detail['head_on_mean']:.2f}, HSI mean: {detail['hsi_mean']:.2f}")
+            elif detail['reason'] == 'insufficient_length':
+                print(f"   {detail['file']}: insufficient length")
+                print(f"      Got {detail['length']} samples, need {detail['required']}")
+    
     if len(all_windows) == 0:
         print("\n❌ ERROR: No valid EEG windows extracted!")
         print("\n💡 TROUBLESHOOTING STEPS:")
@@ -304,6 +343,7 @@ def load_eeg_data(data_root, config):
         print("   2. Verify DATA_ROOT path is correct")
         print("   3. Check that JSON files contain RAW_TP9, RAW_AF7, RAW_AF8, RAW_TP10 keys")
         print("   4. Ensure HeadBandOn and quality indicators (HSI_*) are present")
+        print("   5. Check if quality_filtered count is high - quality thresholds may be too strict")
         raise ValueError("No valid EEG data extracted.")
     
     X_raw = np.stack(all_windows).astype(np.float32)
