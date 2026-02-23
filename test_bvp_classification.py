@@ -3,6 +3,7 @@ BVP Classification Test Script
 ===============================
 
 This script tests the complete BVP emotion classification pipeline:
+- Load REAL BVP data from dataset using bvp_data_loader
 - BVP encoder (with/without attention)
 - Classification head
 - End-to-end training and evaluation
@@ -35,6 +36,7 @@ from classification_head import (
     get_classification_head
 )
 from bvp_config import BVPConfig
+from bvp_data_loader import load_bvp_data, create_data_splits
 
 
 # ==================================================
@@ -43,11 +45,15 @@ from bvp_config import BVPConfig
 
 class TestConfig:
     """Configuration for BVP classification test."""
+    # Data path - UPDATE THIS TO YOUR DATASET PATH
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined"  # Change this!
+    
+    # BVP Device Selection - Choose 'samsung_watch' or 'empatica'
+    BVP_DEVICE = 'samsung_watch'  # Options: 'samsung_watch', 'empatica', 'both'
+    
     # Data parameters
-    NUM_SAMPLES = 1000
     NUM_CLASSES = 4
     BATCH_SIZE = 32
-    TIME_STEPS = 640  # 10 seconds at 64 Hz
     
     # Model parameters
     BVP_HIDDEN_SIZE = 32
@@ -59,6 +65,28 @@ class TestConfig:
     LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-4
     PATIENCE = 10
+    
+    # BVP signal parameters (from BVPConfig)
+    BVP_FS = 64  # Samsung Watch sampling frequency
+    BVP_WINDOW_SEC = 10.0
+    BVP_OVERLAP = 0.0
+    
+    # Preprocessing flags
+    USE_BVP_BASELINE_CORRECTION = False
+    USE_BVP_BASELINE_REDUCTION = True  # Set to True if you have baseline recordings
+    
+    # Subject-independent split
+    SUBJECT_INDEPENDENT = True
+    
+    # Label mappings
+    SUPERCLASS_MAP = {
+        "ENTHUSIASM": "Q1",
+        "FEAR": "Q2",
+        "SADNESS": "Q3",
+        "NEUTRAL": "Q4",
+    }
+    
+    SUPERCLASS_ID = {"Q1": 0, "Q2": 1, "Q3": 2, "Q4": 3}
     
     # Labels
     EMOTION_LABELS = [
@@ -80,81 +108,6 @@ torch.manual_seed(config.SEED)
 np.random.seed(config.SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(config.SEED)
-
-
-# ==================================================
-# SYNTHETIC DATA GENERATION
-# ==================================================
-
-def generate_synthetic_bvp_data(num_samples, time_steps, num_classes, seed=42):
-    """
-    Generate synthetic BVP data with different patterns for each emotion class.
-    
-    Args:
-        num_samples (int): Number of samples to generate
-        time_steps (int): Length of each BVP signal
-        num_classes (int): Number of emotion classes
-        seed (int): Random seed
-    
-    Returns:
-        X (np.ndarray): BVP signals [N, T]
-        y (np.ndarray): Labels [N]
-    """
-    np.random.seed(seed)
-    
-    X = []
-    y = []
-    
-    samples_per_class = num_samples // num_classes
-    time = np.linspace(0, 10, time_steps)  # 10 seconds
-    
-    for class_id in range(num_classes):
-        for _ in range(samples_per_class):
-            # Create different BVP patterns for each emotion
-            if class_id == 0:  # Q1: Positive + High Arousal (Enthusiasm)
-                # Fast heart rate, high amplitude
-                freq = np.random.uniform(1.8, 2.2)  # 108-132 BPM
-                amplitude = np.random.uniform(0.8, 1.2)
-                signal = amplitude * np.sin(2 * np.pi * freq * time)
-                
-            elif class_id == 1:  # Q2: Negative + High Arousal (Fear)
-                # Very fast heart rate, irregular
-                freq = np.random.uniform(2.0, 2.5)  # 120-150 BPM
-                amplitude = np.random.uniform(0.7, 1.0)
-                signal = amplitude * np.sin(2 * np.pi * freq * time)
-                # Add irregularity
-                signal += 0.2 * np.random.randn(time_steps)
-                
-            elif class_id == 2:  # Q3: Negative + Low Arousal (Sadness)
-                # Slow heart rate, low amplitude
-                freq = np.random.uniform(0.8, 1.2)  # 48-72 BPM
-                amplitude = np.random.uniform(0.4, 0.6)
-                signal = amplitude * np.sin(2 * np.pi * freq * time)
-                
-            else:  # Q4: Positive + Low Arousal (Neutral)
-                # Normal heart rate, moderate amplitude
-                freq = np.random.uniform(1.2, 1.5)  # 72-90 BPM
-                amplitude = np.random.uniform(0.6, 0.8)
-                signal = amplitude * np.sin(2 * np.pi * freq * time)
-            
-            # Add realistic noise
-            signal += 0.05 * np.random.randn(time_steps)
-            
-            # Normalize
-            signal = (signal - signal.mean()) / (signal.std() + 1e-8)
-            
-            X.append(signal)
-            y.append(class_id)
-    
-    X = np.array(X, dtype=np.float32)
-    y = np.array(y, dtype=np.int64)
-    
-    # Shuffle
-    indices = np.random.permutation(len(X))
-    X = X[indices]
-    y = y[indices]
-    
-    return X, y
 
 
 # ==================================================
@@ -451,7 +404,7 @@ def plot_sample_predictions(model, test_data, test_labels, num_samples=8,
     model.eval()
     
     # Select random samples
-    indices = np.random.choice(len(test_data), num_samples, replace=False)
+    indices = np.random.choice(len(test_data), min(num_samples, len(test_data)), replace=False)
     
     fig, axes = plt.subplots(2, 4, figsize=(16, 8))
     axes = axes.flatten()
@@ -495,38 +448,49 @@ def plot_sample_predictions(model, test_data, test_labels, num_samples=8,
 def main():
     """Run complete BVP classification test."""
     print("="*80)
-    print("BVP EMOTION CLASSIFICATION TEST")
+    print("BVP EMOTION CLASSIFICATION TEST (REAL DATA)")
     print("="*80)
     print(f"Device: {config.DEVICE}")
-    print(f"Number of samples: {config.NUM_SAMPLES}")
+    print(f"Data path: {config.DATA_ROOT}")
     print(f"Number of classes: {config.NUM_CLASSES}")
     print(f"Batch size: {config.BATCH_SIZE}")
     print(f"Epochs: {config.NUM_EPOCHS}")
+    print(f"Subject-independent: {config.SUBJECT_INDEPENDENT}")
     print("="*80)
     
-    # Step 1: Generate synthetic data
-    print("\n📊 Generating synthetic BVP data...")
-    X_data, y_labels = generate_synthetic_bvp_data(
-        num_samples=config.NUM_SAMPLES,
-        time_steps=config.TIME_STEPS,
-        num_classes=config.NUM_CLASSES,
-        seed=config.SEED
-    )
+    # Step 1: Load REAL BVP data from dataset
+    print("\n📊 Loading REAL BVP data from dataset...")
     
-    print(f"   Data shape: {X_data.shape}")
-    print(f"   Labels shape: {y_labels.shape}")
-    print(f"   Label distribution: {np.bincount(y_labels)}")
+    try:
+        X_raw, y_labels, subject_ids, label_to_id = load_bvp_data(config.DATA_ROOT, config)
+        
+        print(f"\n✅ Data loaded successfully!")
+        print(f"   Total samples: {len(X_raw)}")
+        print(f"   Signal shape: {X_raw.shape}")
+        print(f"   Unique subjects: {len(np.unique(subject_ids))}")
+        print(f"   Label mapping: {label_to_id}")
+        
+    except Exception as e:
+        print(f"\n❌ Error loading data: {e}")
+        print(f"\n💡 Make sure to update DATA_ROOT in the config to your dataset path!")
+        print(f"   Current path: {config.DATA_ROOT}")
+        print(f"\n   Expected file pattern: *_STIMULUS_SAMSUNG_WATCH.json or *_STIMULUS_EMPATICA.json")
+        return
     
-    # Step 2: Split data
-    train_size = int(0.7 * len(X_data))
-    val_size = int(0.15 * len(X_data))
+    # Step 2: Create data splits
+    split_indices = create_data_splits(y_labels, subject_ids, config,
+                                      train_ratio=0.70, val_ratio=0.15, test_ratio=0.15)
     
-    X_train = X_data[:train_size]
-    y_train = y_labels[:train_size]
-    X_val = X_data[train_size:train_size + val_size]
-    y_val = y_labels[train_size:train_size + val_size]
-    X_test = X_data[train_size + val_size:]
-    y_test = y_labels[train_size + val_size:]
+    train_idx = split_indices['train']
+    val_idx = split_indices['val']
+    test_idx = split_indices['test']
+    
+    X_train = X_raw[train_idx]
+    y_train = y_labels[train_idx]
+    X_val = X_raw[val_idx]
+    y_val = y_labels[val_idx]
+    X_test = X_raw[test_idx]
+    y_test = y_labels[test_idx]
     
     print(f"\n📂 Data split:")
     print(f"   Train: {len(X_train)} samples")
@@ -538,7 +502,7 @@ def main():
     y_train_tensor = torch.LongTensor(y_train)
     X_val_tensor = torch.FloatTensor(X_val).unsqueeze(-1)
     y_val_tensor = torch.LongTensor(y_val)
-    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(-1)
+    X_test_tensor = torch.FloatFloat(X_test).unsqueeze(-1)
     y_test_tensor = torch.LongTensor(y_test)
     
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
@@ -579,7 +543,7 @@ def main():
         
         # Evaluate on test set
         criterion = nn.CrossEntropyLoss()
-        test_loss, test_acc, test_f1, test_preds, test_labels = evaluate(
+        test_loss, test_acc, test_f1, test_preds, test_labels_eval = evaluate(
             model, test_loader, criterion, config.DEVICE
         )
         
@@ -590,7 +554,7 @@ def main():
         
         # Classification report
         print(f"\n📋 Classification Report:")
-        print(classification_report(test_labels, test_preds, 
+        print(classification_report(test_labels_eval, test_preds, 
                                    target_names=config.EMOTION_LABELS,
                                    digits=3))
         
@@ -601,14 +565,14 @@ def main():
             'test_acc': test_acc,
             'test_f1': test_f1,
             'test_preds': test_preds,
-            'test_labels': test_labels,
+            'test_labels': test_labels_eval,
             'model': model
         }
         
         # Visualizations for best model (attention_deep)
         if model_name == 'attention_deep':
             plot_training_history(history, f'bvp_classification_training_{model_name}.png')
-            plot_confusion_matrix(test_labels, test_preds, config.EMOTION_LABELS,
+            plot_confusion_matrix(test_labels_eval, test_preds, config.EMOTION_LABELS,
                                 f'bvp_classification_confusion_matrix_{model_name}.png')
             plot_sample_predictions(model, X_test, y_test, num_samples=8,
                                   save_path=f'bvp_classification_samples_{model_name}.png')

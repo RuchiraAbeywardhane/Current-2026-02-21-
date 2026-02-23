@@ -379,6 +379,7 @@ def load_bvp_data(data_root, config):
                 Must have: BVP_FS, BVP_WINDOW_SEC, BVP_OVERLAP, SUPERCLASS_MAP
                 Optional: USE_BVP_BASELINE_CORRECTION (default: True)
                 Optional: USE_BVP_BASELINE_REDUCTION (default: False)
+                Optional: BVP_DEVICE (default: 'both') - 'samsung_watch', 'empatica', or 'both'
     
     Returns:
         X_raw: (N, T) - Raw BVP windows (preprocessed)
@@ -390,15 +391,39 @@ def load_bvp_data(data_root, config):
     print("LOADING BVP DATA (SAMSUNG WATCH / EMPATICA)")
     print("="*80)
     
-    # Search for BVP files (both Samsung Watch and Empatica)
-    patterns = [
-        os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
-    ]
-    files = sorted({p for pat in patterns for p in glob.glob(pat)})
-    print(f"Found {len(files)} BVP files")
+    # Get device selection from config
+    bvp_device = getattr(config, 'BVP_DEVICE', 'both').lower()
+    print(f"🔧 BVP Device Selection: {bvp_device.upper()}")
+    
+    # Search for BVP files based on device selection
+    all_patterns = []
+    
+    if bvp_device in ['samsung_watch', 'both']:
+        all_patterns.extend([
+            os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+        ])
+    
+    if bvp_device in ['empatica', 'both']:
+        all_patterns.extend([
+            os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
+        ])
+    
+    if not all_patterns:
+        raise ValueError(f"Invalid BVP_DEVICE: '{bvp_device}'. Choose 'samsung_watch', 'empatica', or 'both'")
+    
+    files = sorted({p for pat in all_patterns for p in glob.glob(pat)})
+    
+    # Count files by device type
+    samsung_files = [f for f in files if 'SAMSUNG_WATCH' in f]
+    empatica_files = [f for f in files if 'EMPATICA' in f]
+    
+    print(f"Found {len(files)} BVP files total:")
+    if samsung_files:
+        print(f"   📱 Samsung Watch: {len(samsung_files)} files")
+    if empatica_files:
+        print(f"   ⌚ Empatica: {len(empatica_files)} files")
     
     if len(files) == 0:
         print("\n❌ ERROR: No BVP files found!")
@@ -409,7 +434,8 @@ def load_bvp_data(data_root, config):
     
     print(f"\n📁 Sample files:")
     for f in files[:3]:
-        print(f"   {os.path.basename(f)}")
+        device_type = "📱 Samsung" if 'SAMSUNG_WATCH' in f else "⌚ Empatica"
+        print(f"   {device_type}: {os.path.basename(f)}")
     
     # Check preprocessing flags
     use_baseline_correction = getattr(config, 'USE_BVP_BASELINE_CORRECTION', False)
@@ -429,12 +455,21 @@ def load_bvp_data(data_root, config):
     baseline_dict = {}
     if use_baseline_reduction:
         print(f"\n📂 Loading baseline recordings...")
-        baseline_patterns = [
-            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
-            os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
-        ]
+        
+        # Search for baseline files based on device selection
+        baseline_patterns = []
+        if bvp_device in ['samsung_watch', 'both']:
+            baseline_patterns.extend([
+                os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
+                os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json")
+            ])
+        
+        if bvp_device in ['empatica', 'both']:
+            baseline_patterns.extend([
+                os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
+                os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
+            ])
+        
         baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
         print(f"   Found {len(baseline_files)} baseline files")
         
