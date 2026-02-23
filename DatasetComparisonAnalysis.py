@@ -45,8 +45,8 @@ plt.rcParams['figure.figsize'] = (15, 10)
 class ComparisonConfig:
     """Configuration for dataset comparison."""
     # Dataset paths
-    RAW_DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
-    PREPROCESSED_DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-outputv2-0/ASR_output"
+    RAW_DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-outputv2-0/ASR_output"
+    PREPROCESSED_DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
     
     # EEG parameters
     EEG_FS = 256.0
