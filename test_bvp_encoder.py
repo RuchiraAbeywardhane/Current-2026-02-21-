@@ -56,7 +56,7 @@ def test_encoder_architecture():
     print("="*80)
     
     batch_size = 8
-    time_steps = config.BVP_WINDOW_SEC * config.BVP_FS  # 640 samples
+    time_steps = int(config.BVP_WINDOW_SEC * config.BVP_FS)  # 640 samples
     
     # Create dummy data
     dummy_input = torch.randn(batch_size, time_steps, config.BVP_INPUT_SIZE)
