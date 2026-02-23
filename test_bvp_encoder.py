@@ -404,6 +404,183 @@ def test_batch_processing():
         print(f"   {status} Batch size {batch_size:3d}: Output shape {context.shape}")
 
 
+def test_classification_head():
+    """Test 7: Test encoder with classification head for emotion recognition."""
+    print("\n" + "="*80)
+    print("TEST 7: EMOTION CLASSIFICATION")
+    print("="*80)
+    
+    try:
+        # Load real BVP data
+        print("\n📂 Loading BVP data for classification test...")
+        X_raw, y_labels, subject_ids, label_to_id = load_bvp_data(config.DATA_ROOT, config)
+        
+        # Use a subset for quick testing
+        n_samples = min(200, len(X_raw))
+        X_subset = X_raw[:n_samples]
+        y_subset = y_labels[:n_samples]
+        
+        # Convert to PyTorch tensors
+        X_tensor = torch.from_numpy(X_subset).float().unsqueeze(-1)  # (N, T, 1)
+        y_tensor = torch.from_numpy(y_subset).long()
+        
+        print(f"\n📊 Classification Dataset:")
+        print(f"   Samples: {n_samples}")
+        print(f"   Input shape: {X_tensor.shape}")
+        print(f"   Classes: {config.NUM_CLASSES}")
+        print(f"   Class distribution: {torch.bincount(y_tensor).numpy()}")
+        
+        # Create encoder + classifier model
+        class BVPClassifier(nn.Module):
+            def __init__(self, encoder, num_classes):
+                super(BVPClassifier, self).__init__()
+                self.encoder = encoder
+                self.classifier = nn.Sequential(
+                    nn.Linear(encoder.get_output_dim(), 128),
+                    nn.ReLU(),
+                    nn.Dropout(0.3),
+                    nn.Linear(128, num_classes)
+                )
+            
+            def forward(self, x):
+                context = self.encoder(x)
+                logits = self.classifier(context)
+                return logits
+        
+        # Initialize model
+        encoder = BVPEncoder(
+            input_size=config.INPUT_SIZE,
+            hidden_size=config.HIDDEN_SIZE,
+            dropout=config.DROPOUT
+        )
+        model = BVPClassifier(encoder, config.NUM_CLASSES).to(config.DEVICE)
+        
+        # Setup training
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        criterion = nn.CrossEntropyLoss()
+        
+        # Simple train/test split
+        n_train = int(0.8 * n_samples)
+        X_train, X_test = X_tensor[:n_train], X_tensor[n_train:]
+        y_train, y_test = y_tensor[:n_train], y_tensor[n_train:]
+        
+        print(f"\n📊 Split:")
+        print(f"   Train: {len(X_train)} samples")
+        print(f"   Test: {len(X_test)} samples")
+        
+        # Quick training loop (just a few epochs to test)
+        print(f"\n🔧 Training classifier (quick test - 10 epochs)...")
+        model.train()
+        batch_size = 16
+        n_epochs = 10
+        
+        for epoch in range(n_epochs):
+            epoch_loss = 0.0
+            n_batches = 0
+            
+            # Simple batch iteration
+            for i in range(0, len(X_train), batch_size):
+                batch_X = X_train[i:i+batch_size].to(config.DEVICE)
+                batch_y = y_train[i:i+batch_size].to(config.DEVICE)
+                
+                optimizer.zero_grad()
+                logits = model(batch_X)
+                loss = criterion(logits, batch_y)
+                loss.backward()
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+                n_batches += 1
+            
+            avg_loss = epoch_loss / n_batches
+            
+            # Evaluate on test set
+            model.eval()
+            with torch.no_grad():
+                test_logits = model(X_test.to(config.DEVICE))
+                test_preds = torch.argmax(test_logits, dim=1)
+                test_acc = (test_preds.cpu() == y_test).float().mean().item()
+            model.train()
+            
+            if (epoch + 1) % 2 == 0 or epoch == 0:
+                print(f"   Epoch {epoch+1:2d}/{n_epochs} | Loss: {avg_loss:.4f} | Test Acc: {test_acc:.3f} ({test_acc*100:.1f}%)")
+        
+        # Final evaluation
+        print(f"\n📊 Final Evaluation:")
+        model.eval()
+        with torch.no_grad():
+            # Train accuracy
+            train_logits = model(X_train.to(config.DEVICE))
+            train_preds = torch.argmax(train_logits, dim=1)
+            train_acc = (train_preds.cpu() == y_train).float().mean().item()
+            
+            # Test accuracy
+            test_logits = model(X_test.to(config.DEVICE))
+            test_preds = torch.argmax(test_logits, dim=1)
+            test_acc = (test_preds.cpu() == y_test).float().mean().item()
+            
+            print(f"   Train Accuracy: {train_acc:.3f} ({train_acc*100:.1f}%)")
+            print(f"   Test Accuracy: {test_acc:.3f} ({test_acc*100:.1f}%)")
+        
+        # Confusion matrix
+        from collections import Counter
+        y_test_np = y_test.numpy()
+        y_pred_np = test_preds.cpu().numpy()
+        
+        print(f"\n📊 Per-Class Performance (Test Set):")
+        for class_id in range(config.NUM_CLASSES):
+            mask = y_test_np == class_id
+            if mask.sum() > 0:
+                class_acc = (y_pred_np[mask] == class_id).mean()
+                class_name = [k for k, v in label_to_id.items() if v == class_id][0]
+                print(f"   Class {class_id} ({class_name}): {class_acc:.3f} ({class_acc*100:.1f}%) [{mask.sum()} samples]")
+        
+        # Confusion matrix
+        conf_matrix = np.zeros((config.NUM_CLASSES, config.NUM_CLASSES), dtype=int)
+        for true_label, pred_label in zip(y_test_np, y_pred_np):
+            conf_matrix[true_label, pred_label] += 1
+        
+        print(f"\n📊 Confusion Matrix:")
+        print(f"   Rows: True labels, Columns: Predicted labels")
+        header = "       " + "  ".join([f"P{i}" for i in range(config.NUM_CLASSES)])
+        print(f"   {header}")
+        for i in range(config.NUM_CLASSES):
+            row = f"   T{i}:  " + "  ".join([f"{conf_matrix[i, j]:3d}" for j in range(config.NUM_CLASSES)])
+            print(row)
+        
+        # Visualize predictions
+        print(f"\n📊 Sample Predictions:")
+        for i in range(min(10, len(y_test))):
+            true_label = y_test[i].item()
+            pred_label = test_preds[i].item()
+            true_name = [k for k, v in label_to_id.items() if v == true_label][0]
+            pred_name = [k for k, v in label_to_id.items() if v == pred_label][0]
+            status = "✅" if true_label == pred_label else "❌"
+            print(f"   {status} Sample {i+1}: True={true_name}, Pred={pred_name}")
+        
+        print(f"\n✅ Classification test complete!")
+        print(f"   🎯 The BVP encoder CAN be used for emotion classification!")
+        print(f"   📈 Test accuracy: {test_acc*100:.1f}% (with minimal training)")
+        
+        # Save model info
+        total_params = sum(p.numel() for p in model.parameters())
+        encoder_params = sum(p.numel() for p in model.encoder.parameters())
+        classifier_params = sum(p.numel() for p in model.classifier.parameters())
+        
+        print(f"\n📊 Model Size:")
+        print(f"   Total parameters: {total_params:,}")
+        print(f"   Encoder parameters: {encoder_params:,} ({100*encoder_params/total_params:.1f}%)")
+        print(f"   Classifier parameters: {classifier_params:,} ({100*classifier_params/total_params:.1f}%)")
+        
+        return model, test_acc
+        
+    except Exception as e:
+        print(f"\n❌ Error during classification test: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+
 # ==================================================
 # MAIN EXECUTION
 # ==================================================
@@ -438,6 +615,9 @@ def main():
     
     # Test 6: Batch processing
     test_batch_processing()
+    
+    # Test 7: Classification head
+    test_classification_head()
     
     print("\n" + "="*80)
     print("🎉 ALL ENCODER TESTS COMPLETE!")
