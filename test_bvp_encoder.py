@@ -415,10 +415,13 @@ def test_classification_head():
         print("\n📂 Loading BVP data for classification test...")
         X_raw, y_labels, subject_ids, label_to_id = load_bvp_data(config.DATA_ROOT, config)
         
-        # Use a subset for quick testing
-        n_samples = min(200, len(X_raw))
-        X_subset = X_raw[:n_samples]
-        y_subset = y_labels[:n_samples]
+        # Use MORE samples for better training (500 or all available)
+        n_samples = min(500, len(X_raw))  # Increased from 200
+        
+        # Shuffle data to avoid bias
+        indices = np.random.permutation(len(X_raw))[:n_samples]
+        X_subset = X_raw[indices]
+        y_subset = y_labels[indices]
         
         # Convert to PyTorch tensors
         X_tensor = torch.from_numpy(X_subset).float().unsqueeze(-1)  # (N, T, 1)
@@ -428,18 +431,28 @@ def test_classification_head():
         print(f"   Samples: {n_samples}")
         print(f"   Input shape: {X_tensor.shape}")
         print(f"   Classes: {config.NUM_CLASSES}")
-        print(f"   Class distribution: {torch.bincount(y_tensor).numpy()}")
+        class_counts = torch.bincount(y_tensor)
+        print(f"   Class distribution: {class_counts.numpy()}")
+        for i in range(config.NUM_CLASSES):
+            class_name = [k for k, v in label_to_id.items() if v == i][0]
+            print(f"      Class {i} ({class_name}): {class_counts[i]} samples ({100*class_counts[i]/n_samples:.1f}%)")
         
-        # Create encoder + classifier model
+        # Create encoder + classifier model with BETTER architecture
         class BVPClassifier(nn.Module):
             def __init__(self, encoder, num_classes):
                 super(BVPClassifier, self).__init__()
                 self.encoder = encoder
+                # Deeper classifier with BatchNorm
                 self.classifier = nn.Sequential(
                     nn.Linear(encoder.get_output_dim(), 128),
+                    nn.BatchNorm1d(128),
                     nn.ReLU(),
-                    nn.Dropout(0.3),
-                    nn.Linear(128, num_classes)
+                    nn.Dropout(0.4),
+                    nn.Linear(128, 64),
+                    nn.BatchNorm1d(64),
+                    nn.ReLU(),
+                    nn.Dropout(0.4),
+                    nn.Linear(64, num_classes)
                 )
             
             def forward(self, x):
@@ -447,63 +460,114 @@ def test_classification_head():
                 logits = self.classifier(context)
                 return logits
         
-        # Initialize model
-        encoder = BVPEncoder(
+        # Initialize model with ATTENTION encoder for better performance
+        encoder = BVPEncoderWithAttention(  # Changed from BVPEncoder
             input_size=config.INPUT_SIZE,
             hidden_size=config.HIDDEN_SIZE,
             dropout=config.DROPOUT
         )
         model = BVPClassifier(encoder, config.NUM_CLASSES).to(config.DEVICE)
         
-        # Setup training
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        criterion = nn.CrossEntropyLoss()
+        # Setup training with CLASS WEIGHTS to handle imbalance
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
         
-        # Simple train/test split
-        n_train = int(0.8 * n_samples)
-        X_train, X_test = X_tensor[:n_train], X_tensor[n_train:]
-        y_train, y_test = y_tensor[:n_train], y_tensor[n_train:]
+        # Calculate class weights for imbalanced dataset
+        class_weights = 1.0 / class_counts.float()
+        class_weights = class_weights / class_weights.sum() * config.NUM_CLASSES
+        class_weights = class_weights.to(config.DEVICE)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        
+        print(f"\n⚖️  Class weights: {class_weights.cpu().numpy()}")
+        
+        # Better train/val/test split (70/15/15)
+        n_train = int(0.7 * n_samples)
+        n_val = int(0.15 * n_samples)
+        
+        X_train = X_tensor[:n_train]
+        y_train = y_tensor[:n_train]
+        X_val = X_tensor[n_train:n_train+n_val]
+        y_val = y_tensor[n_train:n_train+n_val]
+        X_test = X_tensor[n_train+n_val:]
+        y_test = y_tensor[n_train+n_val:]
         
         print(f"\n📊 Split:")
         print(f"   Train: {len(X_train)} samples")
-        print(f"   Test: {len(X_test)} samples")
+        print(f"   Val:   {len(X_val)} samples")
+        print(f"   Test:  {len(X_test)} samples")
         
-        # Quick training loop (just a few epochs to test)
-        print(f"\n🔧 Training classifier (quick test - 10 epochs)...")
+        # Training loop with MORE epochs and early stopping
+        print(f"\n🔧 Training classifier (with early stopping)...")
         model.train()
         batch_size = 16
-        n_epochs = 10
+        n_epochs = 50  # Increased from 10
+        best_val_acc = 0.0
+        patience = 10
+        patience_counter = 0
+        
+        train_losses = []
+        val_accs = []
         
         for epoch in range(n_epochs):
             epoch_loss = 0.0
             n_batches = 0
             
-            # Simple batch iteration
+            # Shuffle training data each epoch
+            perm = torch.randperm(len(X_train))
+            X_train_shuffled = X_train[perm]
+            y_train_shuffled = y_train[perm]
+            
+            # Mini-batch training
             for i in range(0, len(X_train), batch_size):
-                batch_X = X_train[i:i+batch_size].to(config.DEVICE)
-                batch_y = y_train[i:i+batch_size].to(config.DEVICE)
+                batch_X = X_train_shuffled[i:i+batch_size].to(config.DEVICE)
+                batch_y = y_train_shuffled[i:i+batch_size].to(config.DEVICE)
                 
                 optimizer.zero_grad()
                 logits = model(batch_X)
                 loss = criterion(logits, batch_y)
                 loss.backward()
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
                 optimizer.step()
                 
                 epoch_loss += loss.item()
                 n_batches += 1
             
             avg_loss = epoch_loss / n_batches
+            train_losses.append(avg_loss)
             
-            # Evaluate on test set
+            # Validation
             model.eval()
             with torch.no_grad():
-                test_logits = model(X_test.to(config.DEVICE))
-                test_preds = torch.argmax(test_logits, dim=1)
-                test_acc = (test_preds.cpu() == y_test).float().mean().item()
+                val_logits = model(X_val.to(config.DEVICE))
+                val_preds = torch.argmax(val_logits, dim=1)
+                val_acc = (val_preds.cpu() == y_val).float().mean().item()
+                val_accs.append(val_acc)
             model.train()
             
-            if (epoch + 1) % 2 == 0 or epoch == 0:
-                print(f"   Epoch {epoch+1:2d}/{n_epochs} | Loss: {avg_loss:.4f} | Test Acc: {test_acc:.3f} ({test_acc*100:.1f}%)")
+            # Learning rate scheduling
+            scheduler.step(val_acc)
+            
+            # Early stopping
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_model_state = model.state_dict().copy()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            if (epoch + 1) % 5 == 0 or epoch == 0:
+                print(f"   Epoch {epoch+1:2d}/{n_epochs} | Loss: {avg_loss:.4f} | Val Acc: {val_acc:.3f} ({val_acc*100:.1f}%) | Best: {best_val_acc:.3f}")
+            
+            # Early stopping
+            if patience_counter >= patience:
+                print(f"\n   ⏹️  Early stopping at epoch {epoch+1} (patience reached)")
+                break
+        
+        # Restore best model
+        model.load_state_dict(best_model_state)
         
         # Final evaluation
         print(f"\n📊 Final Evaluation:")
@@ -514,13 +578,20 @@ def test_classification_head():
             train_preds = torch.argmax(train_logits, dim=1)
             train_acc = (train_preds.cpu() == y_train).float().mean().item()
             
+            # Val accuracy
+            val_logits = model(X_val.to(config.DEVICE))
+            val_preds = torch.argmax(val_logits, dim=1)
+            val_acc = (val_preds.cpu() == y_val).float().mean().item()
+            
             # Test accuracy
             test_logits = model(X_test.to(config.DEVICE))
             test_preds = torch.argmax(test_logits, dim=1)
             test_acc = (test_preds.cpu() == y_test).float().mean().item()
             
             print(f"   Train Accuracy: {train_acc:.3f} ({train_acc*100:.1f}%)")
-            print(f"   Test Accuracy: {test_acc:.3f} ({test_acc*100:.1f}%)")
+            print(f"   Val Accuracy:   {val_acc:.3f} ({val_acc*100:.1f}%)")
+            print(f"   Test Accuracy:  {test_acc:.3f} ({test_acc*100:.1f}%)")
+            print(f"   Random Chance:  {1.0/config.NUM_CLASSES:.3f} ({100.0/config.NUM_CLASSES:.1f}%)")
         
         # Confusion matrix
         from collections import Counter
@@ -556,11 +627,26 @@ def test_classification_head():
             true_name = [k for k, v in label_to_id.items() if v == true_label][0]
             pred_name = [k for k, v in label_to_id.items() if v == pred_label][0]
             status = "✅" if true_label == pred_label else "❌"
-            print(f"   {status} Sample {i+1}: True={true_name}, Pred={pred_name}")
+            confidence = torch.softmax(test_logits[i], dim=0)[pred_label].item()
+            print(f"   {status} Sample {i+1}: True={true_name}, Pred={pred_name} (conf: {confidence:.2f})")
         
-        print(f"\n✅ Classification test complete!")
-        print(f"   🎯 The BVP encoder CAN be used for emotion classification!")
-        print(f"   📈 Test accuracy: {test_acc*100:.1f}% (with minimal training)")
+        # Analysis
+        print(f"\n📈 Analysis:")
+        if test_acc > (1.0/config.NUM_CLASSES + 0.05):
+            print(f"   ✅ Model performs BETTER than random chance!")
+            print(f"   🎯 The BVP encoder CAN classify emotions (though accuracy is modest)")
+        elif test_acc > (1.0/config.NUM_CLASSES):
+            print(f"   ⚠️  Model performs slightly better than random")
+            print(f"   💡 BVP alone may have limited discriminative power for 4-class emotions")
+        else:
+            print(f"   ❌ Model performs WORSE than or equal to random chance")
+            print(f"   💡 BVP alone is insufficient - consider multimodal fusion (EEG+BVP)")
+        
+        print(f"\n💡 Recommendations:")
+        print(f"   1. Use BVP as part of MULTIMODAL fusion (EEG + BVP)")
+        print(f"   2. BVP provides complementary physiological signals to EEG")
+        print(f"   3. Extract handcrafted BVP features (HR, HRV) alongside raw signals")
+        print(f"   4. Consider binary classification (valence/arousal) instead of 4-class")
         
         # Save model info
         total_params = sum(p.numel() for p in model.parameters())
