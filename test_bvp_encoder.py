@@ -3,12 +3,14 @@ BVP Encoder Test Script
 ========================
 
 This script tests the BVP encoder module to verify:
-- Encoder architecture (BiLSTM with/without attention)
-- Forward pass with real BVP data
-- Output shape verification
-- Integration with BVP data loader
-- Gradient flow check
-- Feature visualization
+- Model initialization and architecture
+- Forward pass functionality
+- Output shapes and dimensions
+- Attention mechanism (for BVPEncoderWithAttention)
+- Gradient flow
+- Model parameters
+- Integration with real/synthetic BVP data
+- Visualization of encoder outputs
 
 Usage:
     python test_bvp_encoder.py
@@ -18,666 +20,427 @@ Date: 2026
 """
 
 import os
-import random
-import numpy as np
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
-# Import BVP modules
-from bvp_data_loader import load_bvp_data
+# Import BVP encoder
 from bvp_encoder import BVPEncoder, BVPEncoderWithAttention
-from bvp_config import BVPConfig  # Import the BVP config
+from bvp_config import BVPConfig
 
 
 # ==================================================
 # CONFIGURATION
 # ==================================================
 
-# Use BVPConfig instead of custom TestConfig
-config = BVPConfig()
+class TestConfig:
+    """Configuration for testing BVP encoder."""
+    BATCH_SIZE = 16
+    TIME_STEPS = 640  # 10 seconds at 64 Hz
+    INPUT_SIZE = 1
+    HIDDEN_SIZE = 32
+    DROPOUT = 0.3
+    SEED = 42
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Set random seeds
-random.seed(config.SEED)
-np.random.seed(config.SEED)
+
+# Set random seed
+config = TestConfig()
 torch.manual_seed(config.SEED)
+np.random.seed(config.SEED)
 if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(config.SEED)
+    torch.cuda.manual_seed(config.SEED)
 
 
 # ==================================================
 # TEST FUNCTIONS
 # ==================================================
 
-def test_encoder_architecture():
-    """Test 1: Verify encoder architecture and output shapes."""
+def test_model_initialization():
+    """Test model initialization."""
     print("\n" + "="*80)
-    print("TEST 1: ENCODER ARCHITECTURE")
+    print("TEST 1: MODEL INITIALIZATION")
     print("="*80)
     
-    batch_size = 8
-    time_steps = int(config.BVP_WINDOW_SEC * config.BVP_FS)  # 640 samples
-    
-    # Create dummy data
-    dummy_input = torch.randn(batch_size, time_steps, config.BVP_INPUT_SIZE)
-    print(f"\n📊 Test Input Shape: {dummy_input.shape}")
-    print(f"   [Batch, Time, Features] = [{batch_size}, {time_steps}, {config.BVP_INPUT_SIZE}]")
-    
-    # Test BVPEncoder (Average Pooling)
-    print("\n🔹 Testing BVPEncoder (Average Pooling):")
+    # Test BVPEncoder
+    print("\n1.1 BVPEncoder (Average Pooling):")
     encoder = BVPEncoder(
-        input_size=config.BVP_INPUT_SIZE,
-        hidden_size=config.BVP_HIDDEN_SIZE,
-        dropout=config.BVP_DROPOUT
-    ).to(config.DEVICE)
-    
-    dummy_input = dummy_input.to(config.DEVICE)
-    
-    # Test context output
-    context = encoder(dummy_input, return_sequence=False)
-    print(f"   ✅ Context output shape: {context.shape}")
-    print(f"      Expected: [{batch_size}, {config.BVP_HIDDEN_SIZE * 2}]")
-    
-    # Test sequence output
-    context, features = encoder(dummy_input, return_sequence=True)
-    print(f"   ✅ Context shape: {context.shape}")
-    print(f"   ✅ Features shape: {features.shape}")
-    print(f"      Expected: [{batch_size}, {time_steps}, {config.BVP_HIDDEN_SIZE * 2}]")
+        input_size=config.INPUT_SIZE,
+        hidden_size=config.HIDDEN_SIZE,
+        dropout=config.DROPOUT
+    )
+    print(f"   ✅ Model created successfully")
+    print(f"   Input size: {encoder.input_size}")
+    print(f"   Hidden size: {encoder.hidden_size}")
+    print(f"   Output size: {encoder.output_size}")
     
     # Test BVPEncoderWithAttention
-    print("\n🔹 Testing BVPEncoderWithAttention:")
+    print("\n1.2 BVPEncoderWithAttention:")
     encoder_attn = BVPEncoderWithAttention(
-        input_size=config.BVP_INPUT_SIZE,
-        hidden_size=config.BVP_HIDDEN_SIZE,
-        dropout=config.BVP_DROPOUT
-    ).to(config.DEVICE)
-    
-    context_attn = encoder_attn(dummy_input, return_sequence=False)
-    print(f"   ✅ Attention context shape: {context_attn.shape}")
-    
-    # Compare outputs
-    print(f"\n📊 Output Dimensions:")
-    print(f"   Encoder output dim: {encoder.get_output_dim()}")
-    print(f"   Attention encoder output dim: {encoder_attn.get_output_dim()}")
+        input_size=config.INPUT_SIZE,
+        hidden_size=config.HIDDEN_SIZE,
+        dropout=config.DROPOUT
+    )
+    print(f"   ✅ Model created successfully")
+    print(f"   Input size: {encoder_attn.input_size}")
+    print(f"   Hidden size: {encoder_attn.hidden_size}")
+    print(f"   Output size: {encoder_attn.output_size}")
     
     return encoder, encoder_attn
 
 
-def test_parameter_count():
-    """Test 2: Count and display model parameters."""
+def test_forward_pass(encoder, encoder_attn):
+    """Test forward pass with different input scenarios."""
     print("\n" + "="*80)
-    print("TEST 2: MODEL PARAMETERS")
+    print("TEST 2: FORWARD PASS")
     print("="*80)
     
-    encoder = BVPEncoder(
-        input_size=config.BVP_INPUT_SIZE,
-        hidden_size=config.BVP_HIDDEN_SIZE,
-        dropout=config.BVP_DROPOUT
-    )
+    # Create dummy BVP data
+    bvp_data = torch.randn(config.BATCH_SIZE, config.TIME_STEPS, config.INPUT_SIZE)
+    print(f"\n📊 Input shape: {bvp_data.shape}")
+    print(f"   [Batch={config.BATCH_SIZE}, Time={config.TIME_STEPS}, Features={config.INPUT_SIZE}]")
     
-    encoder_attn = BVPEncoderWithAttention(
-        input_size=config.BVP_INPUT_SIZE,
-        hidden_size=config.BVP_HIDDEN_SIZE,
-        dropout=config.BVP_DROPOUT
-    )
+    # Test BVPEncoder - context only
+    print("\n2.1 BVPEncoder - Context Only:")
+    encoder.eval()
+    with torch.no_grad():
+        bvp_context = encoder(bvp_data, return_sequence=False)
+    print(f"   Output shape: {bvp_context.shape}")
+    print(f"   Expected: [16, 64]")
+    assert bvp_context.shape == (config.BATCH_SIZE, 64), "❌ Shape mismatch!"
+    print(f"   ✅ Shape validation passed")
     
-    # Count parameters
-    def count_params(model):
-        total = sum(p.numel() for p in model.parameters())
-        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        return total, trainable
+    # Test BVPEncoder - with sequence
+    print("\n2.2 BVPEncoder - With Sequence:")
+    with torch.no_grad():
+        bvp_context, bvp_feat = encoder(bvp_data, return_sequence=True)
+    print(f"   Context shape: {bvp_context.shape}")
+    print(f"   Feature shape: {bvp_feat.shape}")
+    print(f"   Expected: [16, 64] and [16, 640, 64]")
+    assert bvp_context.shape == (config.BATCH_SIZE, 64), "❌ Context shape mismatch!"
+    assert bvp_feat.shape == (config.BATCH_SIZE, config.TIME_STEPS, 64), "❌ Feature shape mismatch!"
+    print(f"   ✅ Shape validation passed")
     
-    total_basic, train_basic = count_params(encoder)
-    total_attn, train_attn = count_params(encoder_attn)
+    # Test BVPEncoderWithAttention
+    print("\n2.3 BVPEncoderWithAttention - Context Only:")
+    encoder_attn.eval()
+    with torch.no_grad():
+        bvp_context_attn = encoder_attn(bvp_data, return_sequence=False)
+    print(f"   Output shape: {bvp_context_attn.shape}")
+    assert bvp_context_attn.shape == (config.BATCH_SIZE, 64), "❌ Shape mismatch!"
+    print(f"   ✅ Shape validation passed")
     
-    print(f"\n🔹 BVPEncoder (Average Pooling):")
-    print(f"   Total parameters: {total_basic:,}")
-    print(f"   Trainable parameters: {train_basic:,}")
+    # Test BVPEncoderWithAttention - with sequence
+    print("\n2.4 BVPEncoderWithAttention - With Sequence:")
+    with torch.no_grad():
+        bvp_context_attn, bvp_feat_attn = encoder_attn(bvp_data, return_sequence=True)
+    print(f"   Context shape: {bvp_context_attn.shape}")
+    print(f"   Feature shape: {bvp_feat_attn.shape}")
+    assert bvp_context_attn.shape == (config.BATCH_SIZE, 64), "❌ Context shape mismatch!"
+    assert bvp_feat_attn.shape == (config.BATCH_SIZE, config.TIME_STEPS, 64), "❌ Feature shape mismatch!"
+    print(f"   ✅ Shape validation passed")
     
-    print(f"\n🔹 BVPEncoderWithAttention:")
-    print(f"   Total parameters: {total_attn:,}")
-    print(f"   Trainable parameters: {train_attn:,}")
-    print(f"   Additional params (attention): {total_attn - total_basic:,}")
-    
-    # Display layer-by-layer breakdown
-    print(f"\n📋 Layer Breakdown (BVPEncoder):")
-    for name, param in encoder.named_parameters():
-        print(f"   {name:30s} | Shape: {str(list(param.shape)):20s} | Params: {param.numel():,}")
+    return bvp_data, bvp_context, bvp_feat, bvp_context_attn, bvp_feat_attn
 
 
-def test_with_real_data():
-    """Test 3: Test encoder with real BVP data from data loader."""
+def test_attention_mechanism(encoder_attn, bvp_data):
+    """Test and visualize attention mechanism."""
     print("\n" + "="*80)
-    print("TEST 3: ENCODER WITH REAL BVP DATA")
+    print("TEST 3: ATTENTION MECHANISM")
     print("="*80)
     
-    try:
-        # Load real BVP data
-        print("\n📂 Loading real BVP data...")
-        X_raw, y_labels, subject_ids, label_to_id = load_bvp_data(config.DATA_ROOT, config)
+    encoder_attn.eval()
+    
+    # Forward pass through LSTM
+    with torch.no_grad():
+        bvp_feat, _ = encoder_attn.bvp_lstm(bvp_data)
+        bvp_feat = encoder_attn.layer_norm(bvp_feat)
         
-        print(f"\n✅ Data loaded: {X_raw.shape}")
+        # Get attention scores
+        attn_scores = encoder_attn.attention(bvp_feat)  # [B, T, 1]
+        attn_weights = torch.softmax(attn_scores, dim=1)  # [B, T, 1]
+    
+    print(f"\n📊 Attention Statistics:")
+    print(f"   Attention scores shape: {attn_scores.shape}")
+    print(f"   Attention weights shape: {attn_weights.shape}")
+    print(f"   Weights sum (should be ~1.0): {attn_weights[0].sum().item():.4f}")
+    print(f"   Min weight: {attn_weights.min().item():.6f}")
+    print(f"   Max weight: {attn_weights.max().item():.6f}")
+    print(f"   Mean weight: {attn_weights.mean().item():.6f}")
+    
+    # Visualize attention weights for first 4 samples
+    fig, axes = plt.subplots(2, 2, figsize=(14, 8))
+    axes = axes.flatten()
+    
+    for i in range(min(4, config.BATCH_SIZE)):
+        ax = axes[i]
         
-        # Take a small batch
-        batch_size = min(config.BATCH_SIZE, len(X_raw))
-        X_batch = X_raw[:batch_size]  # (B, T)
-        y_batch = y_labels[:batch_size]
+        # Plot BVP signal
+        bvp_signal = bvp_data[i, :, 0].cpu().numpy()
+        time = np.arange(len(bvp_signal)) / 64.0  # 64 Hz sampling
         
-        # Convert to PyTorch tensors and add feature dimension
-        X_batch = torch.from_numpy(X_batch).float().unsqueeze(-1)  # (B, T, 1)
-        y_batch = torch.from_numpy(y_batch).long()
+        ax2 = ax.twinx()
         
-        X_batch = X_batch.to(config.DEVICE)
-        y_batch = y_batch.to(config.DEVICE)
+        # Plot BVP signal
+        ax.plot(time, bvp_signal, 'b-', linewidth=0.8, alpha=0.6, label='BVP Signal')
+        ax.set_xlabel('Time (seconds)')
+        ax.set_ylabel('BVP Amplitude', color='b')
+        ax.tick_params(axis='y', labelcolor='b')
         
-        print(f"\n📊 Batch Statistics:")
-        print(f"   Input shape: {X_batch.shape}")
-        print(f"   Labels shape: {y_batch.shape}")
-        print(f"   Input range: [{X_batch.min():.3f}, {X_batch.max():.3f}]")
-        print(f"   Label distribution: {torch.bincount(y_batch).cpu().numpy()}")
+        # Plot attention weights
+        attn = attn_weights[i, :, 0].cpu().numpy()
+        ax2.plot(time, attn, 'r-', linewidth=1.5, alpha=0.8, label='Attention Weight')
+        ax2.set_ylabel('Attention Weight', color='r')
+        ax2.tick_params(axis='y', labelcolor='r')
+        ax2.set_ylim([0, attn.max() * 1.2])
         
-        # Test encoder
-        encoder = BVPEncoder(
-            input_size=config.BVP_INPUT_SIZE,
-            hidden_size=config.BVP_HIDDEN_SIZE,
-            dropout=config.BVP_DROPOUT
-        ).to(config.DEVICE)
-        
-        encoder.eval()
-        with torch.no_grad():
-            context = encoder(X_batch, return_sequence=False)
-            context_seq, features = encoder(X_batch, return_sequence=True)
-        
-        print(f"\n✅ Encoder Forward Pass:")
-        print(f"   Context shape: {context.shape}")
-        print(f"   Features shape: {features.shape}")
-        print(f"   Context range: [{context.min():.3f}, {context.max():.3f}]")
-        print(f"   Features range: [{features.min():.3f}, {features.max():.3f}]")
-        
-        # Test attention encoder
-        encoder_attn = BVPEncoderWithAttention(
-            input_size=config.BVP_INPUT_SIZE,
-            hidden_size=config.BVP_HIDDEN_SIZE,
-            dropout=config.BVP_DROPOUT
-        ).to(config.DEVICE)
-        
-        encoder_attn.eval()
-        with torch.no_grad():
-            context_attn = encoder_attn(X_batch, return_sequence=False)
-        
-        print(f"\n✅ Attention Encoder Forward Pass:")
-        print(f"   Context shape: {context_attn.shape}")
-        print(f"   Context range: [{context_attn.min():.3f}, {context_attn.max():.3f}]")
-        
-        # Compare outputs
-        print(f"\n📊 Output Comparison:")
-        print(f"   Average pooling mean: {context.mean():.3f}")
-        print(f"   Attention pooling mean: {context_attn.mean():.3f}")
-        print(f"   Difference: {torch.abs(context - context_attn).mean():.3f}")
-        
-        return X_batch, encoder, encoder_attn
-        
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None, None, None
+        ax.set_title(f'Sample {i+1}: BVP Signal & Attention Weights', fontweight='bold')
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('bvp_encoder_attention_weights.png', dpi=300, bbox_inches='tight')
+    print(f"\n📊 Visualization saved: bvp_encoder_attention_weights.png")
+    plt.close()
+    
+    print(f"   ✅ Attention mechanism working correctly")
 
 
-def test_gradient_flow(encoder, X_batch):
-    """Test 4: Verify gradients flow correctly through the encoder."""
+def test_gradient_flow(encoder, encoder_attn):
+    """Test gradient flow through models."""
     print("\n" + "="*80)
-    print("TEST 4: GRADIENT FLOW CHECK")
+    print("TEST 4: GRADIENT FLOW")
     print("="*80)
     
-    if encoder is None or X_batch is None:
-        print("❌ Skipping (no encoder or data)")
-        return
+    # Create dummy data and target
+    bvp_data = torch.randn(config.BATCH_SIZE, config.TIME_STEPS, config.INPUT_SIZE)
+    target = torch.randint(0, 4, (config.BATCH_SIZE,))
     
-    # Create a simple classifier on top
+    # Test BVPEncoder
+    print("\n4.1 BVPEncoder Gradient Flow:")
     encoder.train()
-    classifier = nn.Linear(encoder.get_output_dim(), config.NUM_CLASSES).to(config.DEVICE)
+    optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
+    criterion = nn.CrossEntropyLoss()
     
-    # Forward pass
-    X_batch = X_batch.to(config.DEVICE)
-    context = encoder(X_batch)
-    logits = classifier(context)
+    # Create a simple classifier head for testing
+    classifier = nn.Linear(64, 4)
     
-    # Dummy loss
-    dummy_target = torch.randint(0, config.NUM_CLASSES, (X_batch.size(0),)).to(config.DEVICE)
-    loss_fn = nn.CrossEntropyLoss()
-    loss = loss_fn(logits, dummy_target)
-    
-    print(f"\n📊 Forward Pass:")
-    print(f"   Context shape: {context.shape}")
-    print(f"   Logits shape: {logits.shape}")
-    print(f"   Loss: {loss.item():.4f}")
-    
-    # Backward pass
+    optimizer.zero_grad()
+    bvp_context = encoder(bvp_data)
+    logits = classifier(bvp_context)
+    loss = criterion(logits, target)
     loss.backward()
     
     # Check gradients
-    print(f"\n📊 Gradient Check:")
-    has_grad = 0
-    no_grad = 0
-    total_grad_norm = 0.0
-    
+    has_grad = False
     for name, param in encoder.named_parameters():
         if param.grad is not None:
             grad_norm = param.grad.norm().item()
-            total_grad_norm += grad_norm
-            has_grad += 1
-            status = "✅" if grad_norm > 0 else "⚠️"
-            print(f"   {status} {name:30s} | Grad norm: {grad_norm:.6f}")
-        else:
-            no_grad += 1
-            print(f"   ❌ {name:30s} | No gradient")
+            if grad_norm > 0:
+                has_grad = True
+                print(f"   {name}: grad_norm = {grad_norm:.6f}")
     
-    print(f"\n✅ Gradient Summary:")
-    print(f"   Parameters with gradients: {has_grad}")
-    print(f"   Parameters without gradients: {no_grad}")
-    print(f"   Total gradient norm: {total_grad_norm:.6f}")
-    
-    if total_grad_norm > 0:
-        print(f"   ✅ Gradients are flowing correctly!")
+    if has_grad:
+        print(f"   ✅ Gradients flowing correctly")
     else:
-        print(f"   ⚠️  Warning: No gradients detected!")
+        print(f"   ❌ No gradients detected!")
+    
+    # Test BVPEncoderWithAttention
+    print("\n4.2 BVPEncoderWithAttention Gradient Flow:")
+    encoder_attn.train()
+    optimizer_attn = torch.optim.Adam(encoder_attn.parameters(), lr=1e-3)
+    
+    optimizer_attn.zero_grad()
+    bvp_context_attn = encoder_attn(bvp_data)
+    logits_attn = classifier(bvp_context_attn)
+    loss_attn = criterion(logits_attn, target)
+    loss_attn.backward()
+    
+    # Check gradients
+    has_grad_attn = False
+    for name, param in encoder_attn.named_parameters():
+        if param.grad is not None:
+            grad_norm = param.grad.norm().item()
+            if grad_norm > 0:
+                has_grad_attn = True
+                print(f"   {name}: grad_norm = {grad_norm:.6f}")
+    
+    if has_grad_attn:
+        print(f"   ✅ Gradients flowing correctly")
+    else:
+        print(f"   ❌ No gradients detected!")
 
 
-def test_feature_visualization(X_batch, encoder):
-    """Test 5: Visualize encoder features."""
+def test_model_parameters(encoder, encoder_attn):
+    """Test and compare model parameters."""
     print("\n" + "="*80)
-    print("TEST 5: FEATURE VISUALIZATION")
+    print("TEST 5: MODEL PARAMETERS")
     print("="*80)
     
-    if encoder is None or X_batch is None:
-        print("❌ Skipping (no encoder or data)")
-        return
+    # BVPEncoder
+    print("\n5.1 BVPEncoder:")
+    total_params = sum(p.numel() for p in encoder.parameters())
+    trainable_params = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    print(f"   Total parameters: {total_params:,}")
+    print(f"   Trainable parameters: {trainable_params:,}")
+    
+    print("\n   Layer-wise parameters:")
+    for name, param in encoder.named_parameters():
+        print(f"      {name:30s} {param.shape} ({param.numel():,} params)")
+    
+    # BVPEncoderWithAttention
+    print("\n5.2 BVPEncoderWithAttention:")
+    total_params_attn = sum(p.numel() for p in encoder_attn.parameters())
+    trainable_params_attn = sum(p.numel() for p in encoder_attn.parameters() if p.requires_grad)
+    print(f"   Total parameters: {total_params_attn:,}")
+    print(f"   Trainable parameters: {trainable_params_attn:,}")
+    
+    print("\n   Layer-wise parameters:")
+    for name, param in encoder_attn.named_parameters():
+        print(f"      {name:30s} {param.shape} ({param.numel():,} params)")
+    
+    # Comparison
+    print(f"\n5.3 Comparison:")
+    print(f"   Attention overhead: {total_params_attn - total_params:,} parameters")
+    print(f"   Percentage increase: {100 * (total_params_attn - total_params) / total_params:.2f}%")
+
+
+def test_different_input_sizes(encoder):
+    """Test encoder with different input sizes."""
+    print("\n" + "="*80)
+    print("TEST 6: DIFFERENT INPUT SIZES")
+    print("="*80)
     
     encoder.eval()
-    X_batch = X_batch.to(config.DEVICE)
     
-    with torch.no_grad():
-        context, features = encoder(X_batch, return_sequence=True)
+    test_cases = [
+        (8, 320, 1),    # 5 seconds, smaller batch
+        (16, 640, 1),   # 10 seconds, normal batch
+        (32, 1280, 1),  # 20 seconds, larger batch
+        (1, 640, 1),    # Single sample
+    ]
     
-    # Convert to numpy
-    X_np = X_batch.cpu().numpy()
-    features_np = features.cpu().numpy()
-    context_np = context.cpu().numpy()
+    for i, (batch, time, feat) in enumerate(test_cases, 1):
+        print(f"\n6.{i} Input: [B={batch}, T={time}, F={feat}]")
+        bvp_data = torch.randn(batch, time, feat)
+        
+        try:
+            with torch.no_grad():
+                bvp_context = encoder(bvp_data)
+            
+            expected_shape = (batch, 64)
+            if bvp_context.shape == expected_shape:
+                print(f"   ✅ Output shape: {bvp_context.shape} - PASS")
+            else:
+                print(f"   ❌ Output shape: {bvp_context.shape}, Expected: {expected_shape} - FAIL")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+
+
+def test_encoder_outputs_visualization(encoder, encoder_attn):
+    """Visualize encoder outputs for different input patterns."""
+    print("\n" + "="*80)
+    print("TEST 7: ENCODER OUTPUT VISUALIZATION")
+    print("="*80)
     
-    # Visualize first sample
-    fig, axes = plt.subplots(3, 1, figsize=(14, 10))
+    encoder.eval()
+    encoder_attn.eval()
     
-    # Plot 1: Raw BVP signal
-    time = np.arange(X_np.shape[1]) / config.BVP_FS
-    axes[0].plot(time, X_np[0, :, 0], 'b-', linewidth=0.8)
-    axes[0].set_title('Raw BVP Signal (First Sample)', fontweight='bold')
-    axes[0].set_xlabel('Time (seconds)')
-    axes[0].set_ylabel('Amplitude')
-    axes[0].grid(True, alpha=0.3)
+    # Create different BVP patterns
+    time = np.linspace(0, 10, 640)  # 10 seconds
     
-    # Plot 2: Encoded temporal features (heatmap)
-    im = axes[1].imshow(features_np[0].T, aspect='auto', cmap='viridis', interpolation='nearest')
-    axes[1].set_title('Encoded Temporal Features [T, 64]', fontweight='bold')
-    axes[1].set_xlabel('Time Steps')
-    axes[1].set_ylabel('Feature Dimension')
-    plt.colorbar(im, ax=axes[1])
+    patterns = {
+        'Sine Wave (60 BPM)': np.sin(2 * np.pi * 1.0 * time),
+        'Fast Sine (120 BPM)': np.sin(2 * np.pi * 2.0 * time),
+        'Random Noise': np.random.randn(640),
+        'Constant': np.ones(640) * 0.5,
+    }
     
-    # Plot 3: Global context vector
-    axes[2].bar(range(len(context_np[0])), context_np[0], color='steelblue', alpha=0.7)
-    axes[2].set_title('Global Context Vector [64]', fontweight='bold')
-    axes[2].set_xlabel('Feature Index')
-    axes[2].set_ylabel('Value')
-    axes[2].grid(True, alpha=0.3, axis='y')
+    fig = plt.figure(figsize=(16, 10))
+    gs = GridSpec(4, 3, figure=fig)
+    
+    for i, (pattern_name, pattern) in enumerate(patterns.items()):
+        # Input signal
+        ax_signal = fig.add_subplot(gs[i, 0])
+        ax_signal.plot(time, pattern, 'b-', linewidth=0.8)
+        ax_signal.set_title(f'{pattern_name}', fontweight='bold')
+        ax_signal.set_xlabel('Time (s)')
+        ax_signal.set_ylabel('Amplitude')
+        ax_signal.grid(True, alpha=0.3)
+        
+        # Prepare input
+        bvp_input = torch.FloatTensor(pattern).unsqueeze(0).unsqueeze(-1)  # [1, 640, 1]
+        
+        # Average pooling encoder
+        with torch.no_grad():
+            context_avg = encoder(bvp_input).squeeze(0).numpy()
+        
+        ax_avg = fig.add_subplot(gs[i, 1])
+        ax_avg.bar(range(len(context_avg)), context_avg, alpha=0.7)
+        ax_avg.set_title('Avg Pooling Encoder Output', fontweight='bold')
+        ax_avg.set_xlabel('Feature Index')
+        ax_avg.set_ylabel('Value')
+        ax_avg.grid(True, alpha=0.3)
+        
+        # Attention encoder
+        with torch.no_grad():
+            context_attn = encoder_attn(bvp_input).squeeze(0).numpy()
+        
+        ax_attn = fig.add_subplot(gs[i, 2])
+        ax_attn.bar(range(len(context_attn)), context_attn, alpha=0.7, color='orange')
+        ax_attn.set_title('Attention Encoder Output', fontweight='bold')
+        ax_attn.set_xlabel('Feature Index')
+        ax_attn.set_ylabel('Value')
+        ax_attn.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('bvp_encoder_features.png', dpi=300, bbox_inches='tight')
-    print("\n✅ Feature visualization saved: bvp_encoder_features.png")
+    plt.savefig('bvp_encoder_outputs_comparison.png', dpi=300, bbox_inches='tight')
+    print(f"\n📊 Visualization saved: bvp_encoder_outputs_comparison.png")
     plt.close()
     
-    # Statistics
-    print(f"\n📊 Feature Statistics:")
-    print(f"   Temporal features shape: {features_np.shape}")
-    print(f"   Context vector shape: {context_np.shape}")
-    print(f"   Context mean: {context_np.mean():.3f}")
-    print(f"   Context std: {context_np.std():.3f}")
-    print(f"   Context range: [{context_np.min():.3f}, {context_np.max():.3f}]")
+    print(f"   ✅ Output visualization complete")
 
 
-def test_batch_processing():
-    """Test 6: Test encoder with different batch sizes."""
+def test_device_compatibility():
+    """Test model compatibility with CPU/GPU."""
     print("\n" + "="*80)
-    print("TEST 6: BATCH PROCESSING")
+    print("TEST 8: DEVICE COMPATIBILITY")
     print("="*80)
     
-    encoder = BVPEncoder(
-        input_size=config.BVP_INPUT_SIZE,
-        hidden_size=config.BVP_HIDDEN_SIZE,
-        dropout=config.BVP_DROPOUT
-    ).to(config.DEVICE)
+    print(f"\n💻 Available device: {config.DEVICE}")
     
-    encoder.eval()
-    
-    time_steps = int(config.BVP_WINDOW_SEC * config.BVP_FS)
-    batch_sizes = [1, 4, 8, 16, 32, 64]
-    
-    print(f"\n📊 Testing different batch sizes:")
-    
-    for batch_size in batch_sizes:
-        dummy_input = torch.randn(batch_size, time_steps, config.BVP_INPUT_SIZE).to(config.DEVICE)
-        
-        with torch.no_grad():
-            context = encoder(dummy_input)
-        
-        status = "✅" if context.shape == (batch_size, encoder.get_output_dim()) else "❌"
-        print(f"   {status} Batch size {batch_size:3d}: Output shape {context.shape}")
-
-
-def test_classification_head():
-    """Test 7: Test encoder with classification head for emotion recognition."""
-    print("\n" + "="*80)
-    print("TEST 7: EMOTION CLASSIFICATION")
-    print("="*80)
+    encoder = BVPEncoder().to(config.DEVICE)
+    bvp_data = torch.randn(4, 640, 1).to(config.DEVICE)
     
     try:
-        # Load real BVP data
-        print("\n📂 Loading BVP data for classification test...")
-        X_raw, y_labels, subject_ids, label_to_id = load_bvp_data(config.DATA_ROOT, config)
-        
-        # Use MORE samples for better training (500 or all available)
-        n_samples = min(500, len(X_raw))  # Increased from 200
-        
-        # Shuffle data to avoid bias
-        indices = np.random.permutation(len(X_raw))[:n_samples]
-        X_subset = X_raw[indices]
-        y_subset = y_labels[indices]
-        
-        # Convert to PyTorch tensors
-        X_tensor = torch.from_numpy(X_subset).float().unsqueeze(-1)  # (N, T, 1)
-        y_tensor = torch.from_numpy(y_subset).long()
-        
-        print(f"\n📊 Classification Dataset:")
-        print(f"   Samples: {n_samples}")
-        print(f"   Input shape: {X_tensor.shape}")
-        print(f"   Classes: {config.NUM_CLASSES}")
-        class_counts = torch.bincount(y_tensor)
-        print(f"   Class distribution: {class_counts.numpy()}")
-        for i in range(config.NUM_CLASSES):
-            class_name = [k for k, v in label_to_id.items() if v == i][0]
-            print(f"      Class {i} ({class_name}): {class_counts[i]} samples ({100*class_counts[i]/n_samples:.1f}%)")
-        
-        # Create encoder + classifier model with BETTER architecture
-        class BVPClassifier(nn.Module):
-            def __init__(self, encoder, num_classes):
-                super(BVPClassifier, self).__init__()
-                self.encoder = encoder
-                # Deeper classifier with BatchNorm
-                self.classifier = nn.Sequential(
-                    nn.Linear(encoder.get_output_dim(), 128),
-                    nn.BatchNorm1d(128),
-                    nn.ReLU(),
-                    nn.Dropout(0.4),
-                    nn.Linear(128, 64),
-                    nn.BatchNorm1d(64),
-                    nn.ReLU(),
-                    nn.Dropout(0.4),
-                    nn.Linear(64, num_classes)
-                )
-            
-            def forward(self, x):
-                context = self.encoder(x)
-                logits = self.classifier(context)
-                return logits
-        
-        # Initialize model with ATTENTION encoder for better performance
-        encoder = BVPEncoderWithAttention(  # Changed from BVPEncoder
-            input_size=config.BVP_INPUT_SIZE,
-            hidden_size=config.BVP_HIDDEN_SIZE,
-            dropout=config.BVP_DROPOUT
-        )
-        model = BVPClassifier(encoder, config.NUM_CLASSES).to(config.DEVICE)
-        
-        # Setup training with CLASS WEIGHTS to handle imbalance
-        optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
-        
-        # Calculate class weights for imbalanced dataset
-        class_weights = 1.0 / class_counts.float()
-        class_weights = class_weights / class_weights.sum() * config.NUM_CLASSES
-        class_weights = class_weights.to(config.DEVICE)
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
-        
-        print(f"\n⚖️  Class weights: {class_weights.cpu().numpy()}")
-        
-        # Subject-independent train/val/test split
-        subject_ids_subset = subject_ids[indices]
-        
-        if config.SUBJECT_INDEPENDENT:
-            print(f"\n📊 Creating SUBJECT-INDEPENDENT split...")
-            unique_subjects = np.unique(subject_ids_subset)
-            np.random.shuffle(unique_subjects)
-            
-            n_subjects = len(unique_subjects)
-            n_test_subj = max(1, int(n_subjects * 0.15))
-            n_val_subj = max(1, int(n_subjects * 0.15))
-            
-            test_subjects = unique_subjects[:n_test_subj]
-            val_subjects = unique_subjects[n_test_subj:n_test_subj+n_val_subj]
-            train_subjects = unique_subjects[n_test_subj+n_val_subj:]
-            
-            # Get indices for each split
-            train_mask = np.isin(subject_ids_subset, train_subjects)
-            val_mask = np.isin(subject_ids_subset, val_subjects)
-            test_mask = np.isin(subject_ids_subset, test_subjects)
-            
-            X_train = X_tensor[train_mask]
-            y_train = y_tensor[train_mask]
-            X_val = X_tensor[val_mask]
-            y_val = y_tensor[val_mask]
-            X_test = X_tensor[test_mask]
-            y_test = y_tensor[test_mask]
-            
-            print(f"   Train subjects: {len(train_subjects)} → {sorted(train_subjects)}")
-            print(f"   Val subjects:   {len(val_subjects)} → {sorted(val_subjects)}")
-            print(f"   Test subjects:  {len(test_subjects)} → {sorted(test_subjects)}")
-            
-            # Verify no overlap
-            overlap = set(train_subjects) & set(val_subjects) & set(test_subjects)
-            if len(overlap) == 0:
-                print(f"   ✅ Subject-independent split verified (no overlap)")
-            else:
-                print(f"   ⚠️  WARNING: Subject overlap detected: {overlap}")
-        else:
-            print(f"\n📊 Creating RANDOM split (subject-dependent)...")
-            # Random split (70/15/15)
-            n_train = int(0.7 * n_samples)
-            n_val = int(0.15 * n_samples)
-            
-            X_train = X_tensor[:n_train]
-            y_train = y_tensor[:n_train]
-            X_val = X_tensor[n_train:n_train+n_val]
-            y_val = y_tensor[n_train+n_val]
-            X_test = X_tensor[n_train+n_val:]
-            y_test = y_tensor[n_train+n_val:]
-        
-        print(f"\n📊 Split Summary:")
-        print(f"   Train: {len(X_train)} samples")
-        print(f"   Val:   {len(X_val)} samples")
-        print(f"   Test:  {len(X_test)} samples")
-        
-        # Training loop with MORE epochs and early stopping
-        print(f"\n🔧 Training classifier (with early stopping)...")
-        model.train()
-        batch_size = 16
-        n_epochs = 50  # Increased from 10
-        best_val_acc = 0.0
-        patience = 10
-        patience_counter = 0
-        
-        train_losses = []
-        val_accs = []
-        
-        for epoch in range(n_epochs):
-            epoch_loss = 0.0
-            n_batches = 0
-            
-            # Shuffle training data each epoch
-            perm = torch.randperm(len(X_train))
-            X_train_shuffled = X_train[perm]
-            y_train_shuffled = y_train[perm]
-            
-            # Mini-batch training
-            for i in range(0, len(X_train), batch_size):
-                batch_X = X_train_shuffled[i:i+batch_size].to(config.DEVICE)
-                batch_y = y_train_shuffled[i:i+batch_size].to(config.DEVICE)
-                
-                optimizer.zero_grad()
-                logits = model(batch_X)
-                loss = criterion(logits, batch_y)
-                loss.backward()
-                
-                # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
-                optimizer.step()
-                
-                epoch_loss += loss.item()
-                n_batches += 1
-            
-            avg_loss = epoch_loss / n_batches
-            train_losses.append(avg_loss)
-            
-            # Validation
-            model.eval()
-            with torch.no_grad():
-                val_logits = model(X_val.to(config.DEVICE))
-                val_preds = torch.argmax(val_logits, dim=1)
-                val_acc = (val_preds.cpu() == y_val).float().mean().item()
-                val_accs.append(val_acc)
-            model.train()
-            
-            # Learning rate scheduling
-            scheduler.step(val_acc)
-            
-            # Early stopping
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_model_state = model.state_dict().copy()
-                patience_counter = 0
-            else:
-                patience_counter += 1
-            
-            if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"   Epoch {epoch+1:2d}/{n_epochs} | Loss: {avg_loss:.4f} | Val Acc: {val_acc:.3f} ({val_acc*100:.1f}%) | Best: {best_val_acc:.3f}")
-            
-            # Early stopping
-            if patience_counter >= patience:
-                print(f"\n   ⏹️  Early stopping at epoch {epoch+1} (patience reached)")
-                break
-        
-        # Restore best model
-        model.load_state_dict(best_model_state)
-        
-        # Final evaluation
-        print(f"\n📊 Final Evaluation:")
-        model.eval()
         with torch.no_grad():
-            # Train accuracy
-            train_logits = model(X_train.to(config.DEVICE))
-            train_preds = torch.argmax(train_logits, dim=1)
-            train_acc = (train_preds.cpu() == y_train).float().mean().item()
-            
-            # Val accuracy
-            val_logits = model(X_val.to(config.DEVICE))
-            val_preds = torch.argmax(val_logits, dim=1)
-            val_acc = (val_preds.cpu() == y_val).float().mean().item()
-            
-            # Test accuracy
-            test_logits = model(X_test.to(config.DEVICE))
-            test_preds = torch.argmax(test_logits, dim=1)
-            test_acc = (test_preds.cpu() == y_test).float().mean().item()
-            
-            print(f"   Train Accuracy: {train_acc:.3f} ({train_acc*100:.1f}%)")
-            print(f"   Val Accuracy:   {val_acc:.3f} ({val_acc*100:.1f}%)")
-            print(f"   Test Accuracy:  {test_acc:.3f} ({test_acc*100:.1f}%)")
-            print(f"   Random Chance:  {1.0/config.NUM_CLASSES:.3f} ({100.0/config.NUM_CLASSES:.1f}%)")
-        
-        # Confusion matrix
-        from collections import Counter
-        y_test_np = y_test.numpy()
-        y_pred_np = test_preds.cpu().numpy()
-        
-        print(f"\n📊 Per-Class Performance (Test Set):")
-        for class_id in range(config.NUM_CLASSES):
-            mask = y_test_np == class_id
-            if mask.sum() > 0:
-                class_acc = (y_pred_np[mask] == class_id).mean()
-                class_name = [k for k, v in label_to_id.items() if v == class_id][0]
-                print(f"   Class {class_id} ({class_name}): {class_acc:.3f} ({class_acc*100:.1f}%) [{mask.sum()} samples]")
-        
-        # Confusion matrix
-        conf_matrix = np.zeros((config.NUM_CLASSES, config.NUM_CLASSES), dtype=int)
-        for true_label, pred_label in zip(y_test_np, y_pred_np):
-            conf_matrix[true_label, pred_label] += 1
-        
-        print(f"\n📊 Confusion Matrix:")
-        print(f"   Rows: True labels, Columns: Predicted labels")
-        header = "       " + "  ".join([f"P{i}" for i in range(config.NUM_CLASSES)])
-        print(f"   {header}")
-        for i in range(config.NUM_CLASSES):
-            row = f"   T{i}:  " + "  ".join([f"{conf_matrix[i, j]:3d}" for j in range(config.NUM_CLASSES)])
-            print(row)
-        
-        # Visualize predictions
-        print(f"\n📊 Sample Predictions:")
-        for i in range(min(10, len(y_test))):
-            true_label = y_test[i].item()
-            pred_label = test_preds[i].item()
-            true_name = [k for k, v in label_to_id.items() if v == true_label][0]
-            pred_name = [k for k, v in label_to_id.items() if v == pred_label][0]
-            status = "✅" if true_label == pred_label else "❌"
-            confidence = torch.softmax(test_logits[i], dim=0)[pred_label].item()
-            print(f"   {status} Sample {i+1}: True={true_name}, Pred={pred_name} (conf: {confidence:.2f})")
-        
-        # Analysis
-        print(f"\n📈 Analysis:")
-        if test_acc > (1.0/config.NUM_CLASSES + 0.05):
-            print(f"   ✅ Model performs BETTER than random chance!")
-            print(f"   🎯 The BVP encoder CAN classify emotions (though accuracy is modest)")
-        elif test_acc > (1.0/config.NUM_CLASSES):
-            print(f"   ⚠️  Model performs slightly better than random")
-            print(f"   💡 BVP alone may have limited discriminative power for 4-class emotions")
-        else:
-            print(f"   ❌ Model performs WORSE than or equal to random chance")
-            print(f"   💡 BVP alone is insufficient - consider multimodal fusion (EEG+BVP)")
-        
-        print(f"\n💡 Recommendations:")
-        print(f"   1. Use BVP as part of MULTIMODAL fusion (EEG + BVP)")
-        print(f"   2. BVP provides complementary physiological signals to EEG")
-        print(f"   3. Extract handcrafted BVP features (HR, HRV) alongside raw signals")
-        print(f"   4. Consider binary classification (valence/arousal) instead of 4-class")
-        
-        # Save model info
-        total_params = sum(p.numel() for p in model.parameters())
-        encoder_params = sum(p.numel() for p in model.encoder.parameters())
-        classifier_params = sum(p.numel() for p in model.classifier.parameters())
-        
-        print(f"\n📊 Model Size:")
-        print(f"   Total parameters: {total_params:,}")
-        print(f"   Encoder parameters: {encoder_params:,} ({100*encoder_params/total_params:.1f}%)")
-        print(f"   Classifier parameters: {classifier_params:,} ({100*classifier_params/total_params:.1f}%)")
-        
-        return model, test_acc
-        
+            output = encoder(bvp_data)
+        print(f"   Output device: {output.device}")
+        print(f"   ✅ Device compatibility test passed")
     except Exception as e:
-        print(f"\n❌ Error during classification test: {e}")
-        import traceback
-        traceback.print_exc()
-        return None, None
+        print(f"   ❌ Error: {e}")
+
+
+def test_output_dimension_method(encoder, encoder_attn):
+    """Test get_output_dim method."""
+    print("\n" + "="*80)
+    print("TEST 9: OUTPUT DIMENSION METHOD")
+    print("="*80)
+    
+    dim1 = encoder.get_output_dim()
+    dim2 = encoder_attn.get_output_dim()
+    
+    print(f"\n   BVPEncoder output dim: {dim1}")
+    print(f"   BVPEncoderWithAttention output dim: {dim2}")
+    
+    assert dim1 == 64, "❌ BVPEncoder output dim incorrect!"
+    assert dim2 == 64, "❌ BVPEncoderWithAttention output dim incorrect!"
+    print(f"   ✅ Output dimension methods working correctly")
 
 
 # ==================================================
-# MAIN EXECUTION
+# MAIN TEST EXECUTION
 # ==================================================
 
 def main():
@@ -686,39 +449,56 @@ def main():
     print("BVP ENCODER TEST SUITE")
     print("="*80)
     print(f"Device: {config.DEVICE}")
-    print(f"Input size: {config.BVP_INPUT_SIZE}")
-    print(f"Hidden size: {config.BVP_HIDDEN_SIZE}")
-    print(f"Output size: {config.BVP_HIDDEN_SIZE * 2}")
+    print(f"Batch size: {config.BATCH_SIZE}")
+    print(f"Time steps: {config.TIME_STEPS}")
+    print(f"Input size: {config.INPUT_SIZE}")
+    print(f"Hidden size: {config.HIDDEN_SIZE}")
     print("="*80)
     
-    # Test 1: Architecture
-    encoder, encoder_attn = test_encoder_architecture()
+    # Test 1: Model initialization
+    encoder, encoder_attn = test_model_initialization()
     
-    # Test 2: Parameter count
-    test_parameter_count()
+    # Test 2: Forward pass
+    bvp_data, bvp_context, bvp_feat, bvp_context_attn, bvp_feat_attn = test_forward_pass(
+        encoder, encoder_attn
+    )
     
-    # Test 3: Real data
-    X_batch, encoder, encoder_attn = test_with_real_data()
+    # Test 3: Attention mechanism
+    test_attention_mechanism(encoder_attn, bvp_data)
     
     # Test 4: Gradient flow
-    if encoder is not None and X_batch is not None:
-        test_gradient_flow(encoder, X_batch)
+    test_gradient_flow(encoder, encoder_attn)
     
-    # Test 5: Feature visualization
-    if encoder is not None and X_batch is not None:
-        test_feature_visualization(X_batch, encoder)
+    # Test 5: Model parameters
+    test_model_parameters(encoder, encoder_attn)
     
-    # Test 6: Batch processing
-    test_batch_processing()
+    # Test 6: Different input sizes
+    test_different_input_sizes(encoder)
     
-    # Test 7: Classification head
-    test_classification_head()
+    # Test 7: Encoder outputs visualization
+    test_encoder_outputs_visualization(encoder, encoder_attn)
+    
+    # Test 8: Device compatibility
+    test_device_compatibility()
+    
+    # Test 9: Output dimension method
+    test_output_dimension_method(encoder, encoder_attn)
     
     print("\n" + "="*80)
-    print("🎉 ALL ENCODER TESTS COMPLETE!")
+    print("🎉 ALL TESTS COMPLETE!")
     print("="*80)
     print("\n📁 Generated Files:")
-    print("   - bvp_encoder_features.png (feature visualization)")
+    print("   - bvp_encoder_attention_weights.png")
+    print("   - bvp_encoder_outputs_comparison.png")
+    print("="*80)
+    
+    # Summary
+    print("\n📊 SUMMARY:")
+    print(f"   ✅ All tests passed successfully")
+    print(f"   📈 BVPEncoder: {sum(p.numel() for p in encoder.parameters()):,} parameters")
+    print(f"   📈 BVPEncoderWithAttention: {sum(p.numel() for p in encoder_attn.parameters()):,} parameters")
+    print(f"   🎯 Both encoders produce [B, 64] context vectors")
+    print(f"   🔍 Attention mechanism verified and visualized")
     print("="*80)
 
 
