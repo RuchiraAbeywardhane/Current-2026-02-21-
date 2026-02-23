@@ -27,48 +27,17 @@ import torch.nn as nn
 # Import BVP modules
 from bvp_data_loader import load_bvp_data
 from bvp_encoder import BVPEncoder, BVPEncoderWithAttention
+from bvp_config import BVPConfig  # Import the BVP config
 
 
 # ==================================================
 # CONFIGURATION
 # ==================================================
 
-class TestConfig:
-    """Configuration for testing BVP encoder."""
-    # Data path
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined"
-    
-    # BVP parameters
-    BVP_FS = 64
-    BVP_WINDOW_SEC = 10
-    BVP_OVERLAP = 0.0
-    
-    # BVP Preprocessing
-    USE_BVP_BASELINE_CORRECTION = False
-    
-    # Encoder parameters
-    INPUT_SIZE = 1  # Raw BVP signal
-    HIDDEN_SIZE = 32
-    DROPOUT = 0.3
-    
-    # Training parameters
-    BATCH_SIZE = 16
-    NUM_CLASSES = 4
-    SUBJECT_INDEPENDENT = True
-    SEED = 42
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Label mappings
-    SUPERCLASS_MAP = {
-        "ENTHUSIASM": "Q1",
-        "FEAR": "Q2",
-        "SADNESS": "Q3",
-        "NEUTRAL": "Q4",
-    }
-
+# Use BVPConfig instead of custom TestConfig
+config = BVPConfig()
 
 # Set random seeds
-config = TestConfig()
 random.seed(config.SEED)
 np.random.seed(config.SEED)
 torch.manual_seed(config.SEED)
