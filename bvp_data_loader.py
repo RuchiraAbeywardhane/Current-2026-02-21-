@@ -605,11 +605,25 @@ def load_bvp_data(data_root, config):
                             if isinstance(data[field], list) and len(data[field]) > 0:
                                 print(f"         Sample: {data[field][:3]}")
             
-            # Extract BVP data
-            bvp_data = data.get("BVP", [])
+            # Extract BVP data - try multiple possible field names
+            bvp_data = None
+            field_used = None
+            
+            # Try different field names in order of preference
+            possible_fields = ["BVP", "BVPRaw", "BVPProcessed", "PPG", "HR", "SAMSUNG_BVP"]
+            
+            for field_name in possible_fields:
+                if field_name in data and data[field_name]:
+                    bvp_data = data[field_name]
+                    field_used = field_name
+                    if successful_files < 3:
+                        print(f"   ✅ Using field: '{field_name}' (length: {len(bvp_data) if isinstance(bvp_data, (list, dict)) else 'N/A'})")
+                    break
             
             if not bvp_data:
                 skipped_reasons['no_data'] += 1
+                if successful_files < 3:
+                    print(f"   ❌ No BVP data found in any field!")
                 continue
             
             # Handle different BVP data formats
