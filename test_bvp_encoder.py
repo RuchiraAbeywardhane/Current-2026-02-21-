@@ -480,18 +480,58 @@ def test_classification_head():
         
         print(f"\n⚖️  Class weights: {class_weights.cpu().numpy()}")
         
-        # Better train/val/test split (70/15/15)
-        n_train = int(0.7 * n_samples)
-        n_val = int(0.15 * n_samples)
+        # Subject-independent train/val/test split
+        subject_ids_subset = subject_ids[indices]
         
-        X_train = X_tensor[:n_train]
-        y_train = y_tensor[:n_train]
-        X_val = X_tensor[n_train:n_train+n_val]
-        y_val = y_tensor[n_train:n_train+n_val]
-        X_test = X_tensor[n_train+n_val:]
-        y_test = y_tensor[n_train+n_val:]
+        if config.SUBJECT_INDEPENDENT:
+            print(f"\n📊 Creating SUBJECT-INDEPENDENT split...")
+            unique_subjects = np.unique(subject_ids_subset)
+            np.random.shuffle(unique_subjects)
+            
+            n_subjects = len(unique_subjects)
+            n_test_subj = max(1, int(n_subjects * 0.15))
+            n_val_subj = max(1, int(n_subjects * 0.15))
+            
+            test_subjects = unique_subjects[:n_test_subj]
+            val_subjects = unique_subjects[n_test_subj:n_test_subj+n_val_subj]
+            train_subjects = unique_subjects[n_test_subj+n_val_subj:]
+            
+            # Get indices for each split
+            train_mask = np.isin(subject_ids_subset, train_subjects)
+            val_mask = np.isin(subject_ids_subset, val_subjects)
+            test_mask = np.isin(subject_ids_subset, test_subjects)
+            
+            X_train = X_tensor[train_mask]
+            y_train = y_tensor[train_mask]
+            X_val = X_tensor[val_mask]
+            y_val = y_tensor[val_mask]
+            X_test = X_tensor[test_mask]
+            y_test = y_tensor[test_mask]
+            
+            print(f"   Train subjects: {len(train_subjects)} → {sorted(train_subjects)}")
+            print(f"   Val subjects:   {len(val_subjects)} → {sorted(val_subjects)}")
+            print(f"   Test subjects:  {len(test_subjects)} → {sorted(test_subjects)}")
+            
+            # Verify no overlap
+            overlap = set(train_subjects) & set(val_subjects) & set(test_subjects)
+            if len(overlap) == 0:
+                print(f"   ✅ Subject-independent split verified (no overlap)")
+            else:
+                print(f"   ⚠️  WARNING: Subject overlap detected: {overlap}")
+        else:
+            print(f"\n📊 Creating RANDOM split (subject-dependent)...")
+            # Random split (70/15/15)
+            n_train = int(0.7 * n_samples)
+            n_val = int(0.15 * n_samples)
+            
+            X_train = X_tensor[:n_train]
+            y_train = y_tensor[:n_train]
+            X_val = X_tensor[n_train:n_train+n_val]
+            y_val = y_tensor[n_train:n_train+n_val]
+            X_test = X_tensor[n_train+n_val:]
+            y_test = y_tensor[n_train+n_val:]
         
-        print(f"\n📊 Split:")
+        print(f"\n📊 Split Summary:")
         print(f"   Train: {len(X_train)} samples")
         print(f"   Val:   {len(X_val)} samples")
         print(f"   Test:  {len(X_test)} samples")
