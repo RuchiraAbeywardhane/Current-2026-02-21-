@@ -620,7 +620,7 @@ def main():
     raw_data = load_dataset(
         config.RAW_DATA_ROOT,
         "raw",
-        file_pattern="*_STIMULUS_MUSE.json"
+        file_pattern="*_STIMULUS_MUSE_cleaned.json"
     )
     
     preprocessed_data = load_dataset(
