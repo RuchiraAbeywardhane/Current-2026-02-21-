@@ -1,12 +1,8 @@
 """
-    EEG BiLSTM Model Architecture
-    =============================
-    
-    This module contains the BiLSTM-based classifier with attention mechanism
-    for EEG emotion recognition.
-    
-    Author: Final Year Project
-    Date: 2026
+EEG BiLSTM Model Architecture
+==============================
+
+BiLSTM-based classifier with attention mechanism for EEG emotion recognition.
 """
 
 import torch
