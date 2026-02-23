@@ -46,16 +46,17 @@ from bvp_data_loader import (
 class TestConfig:
     """Configuration for testing BVP data loader."""
     # Data path - CHANGE THIS TO YOUR DATA PATH
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined"  # Path to your BVP JSON files
+    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined"
     
     # BVP parameters
     BVP_FS = 64  # Samsung Watch sampling frequency
     BVP_WINDOW_SEC = 10  # 10-second windows
     BVP_OVERLAP = 0.0  # No overlap
+    BVP_DEVICE = 'samsung_watch'  # Only use Samsung Watch, not Empatica
     
     # BVP Preprocessing
-    USE_BVP_BASELINE_CORRECTION = False  # Set to False to skip baseline drift correction
-    USE_BVP_BASELINE_REDUCTION = True   # Set to True to enable baseline reduction (InvBase method)
+    USE_BVP_BASELINE_CORRECTION = False  # Baseline drift correction
+    USE_BVP_BASELINE_REDUCTION = True   # Baseline reduction (InvBase method)
     
     # Classification
     NUM_CLASSES = 4
@@ -95,12 +96,6 @@ def debug_baseline_matching(data_root, bvp_device='samsung_watch'):
             os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json")
         ])
     
-    if bvp_device in ['empatica', 'both']:
-        baseline_patterns.extend([
-            os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
-            os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
-        ])
-    
     baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
     
     print(f"\n📂 Found {len(baseline_files)} baseline files:")
@@ -120,12 +115,6 @@ def debug_baseline_matching(data_root, bvp_device='samsung_watch'):
         stimulus_patterns.extend([
             os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
             os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
-        ])
-    
-    if bvp_device in ['empatica', 'both']:
-        stimulus_patterns.extend([
-            os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
-            os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
         ])
     
     stimulus_files = sorted({p for pat in stimulus_patterns for p in glob.glob(pat)})
@@ -218,7 +207,7 @@ def debug_baseline_matching(data_root, bvp_device='samsung_watch'):
             with open(test_file, 'r') as f:
                 data = json.load(f)
             
-            bvp_baseline = data.get("BVP", [])
+            bvp_baseline = data.get("BVPRaw", [])
             print(f"   ✅ File loaded successfully")
             print(f"   BVP data type: {type(bvp_baseline)}")
             print(f"   BVP length: {len(bvp_baseline)}")
@@ -532,7 +521,7 @@ def test_baseline_reduction_method(data_root, bvp_device='samsung_watch'):
         with open(baseline_file, 'r') as f:
             baseline_data = json.load(f)
         
-        bvp_baseline_raw = baseline_data.get("BVP", [])
+        bvp_baseline_raw = baseline_data.get("BVPRaw", [])
         
         if not bvp_baseline_raw:
             print("❌ No BVP data in baseline file!")
@@ -577,7 +566,7 @@ def test_baseline_reduction_method(data_root, bvp_device='samsung_watch'):
                 # Reload baseline
                 with open(baseline_file, 'r') as f:
                     baseline_data = json.load(f)
-                bvp_baseline_raw = baseline_data.get("BVP", [])
+                bvp_baseline_raw = baseline_data.get("BVPRaw", [])
                 if isinstance(bvp_baseline_raw[0], list):
                     baseline_raw = np.array([row[1] for row in bvp_baseline_raw], dtype=float)
                 else:
@@ -606,7 +595,7 @@ def test_baseline_reduction_method(data_root, bvp_device='samsung_watch'):
         with open(stimulus_file, 'r') as f:
             stimulus_data = json.load(f)
         
-        bvp_stimulus_raw = stimulus_data.get("BVP", [])
+        bvp_stimulus_raw = stimulus_data.get("BVPRaw", [])
         
         if not bvp_stimulus_raw:
             print("❌ No BVP data in stimulus file!")

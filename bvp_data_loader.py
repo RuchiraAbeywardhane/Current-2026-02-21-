@@ -495,7 +495,14 @@ def load_bvp_data(data_root, config):
                 with open(bpath, "r") as f:
                     bdata = json.load(f)
                 
-                bvp_baseline = bdata.get("BVP", [])
+                # Try different field names for baseline data
+                # Samsung Watch uses "BVPRaw", Empatica uses "BVP"
+                bvp_baseline = None
+                for field in ["BVPRaw", "BVP", "BVPProcessed"]:
+                    if field in bdata and bdata[field]:
+                        bvp_baseline = bdata[field]
+                        break
+                
                 if not bvp_baseline:
                     continue
                 
