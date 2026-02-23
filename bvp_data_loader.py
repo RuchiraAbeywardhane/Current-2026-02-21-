@@ -93,6 +93,50 @@ def butter_lowpass(cutoff_hz, fs, order=6):
     return b, a
 
 
+def butter_highpass(cutoff_hz, fs, order=6):
+    """
+    Design Butterworth highpass filter.
+    
+    Args:
+        cutoff_hz: Cutoff frequency in Hz
+        fs: Sampling frequency
+        order: Filter order (default: 6)
+    
+    Returns:
+        b, a: Filter coefficients
+    
+    Reference:
+        Used to remove DC offset and very low-frequency drift from BVP signals
+    """
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff_hz / nyq
+    b, a = butter(order, normal_cutoff, btype='high', analog=False)
+    return b, a
+
+
+def butter_bandpass(lowcut_hz, highcut_hz, fs, order=6):
+    """
+    Design Butterworth bandpass filter.
+    
+    Args:
+        lowcut_hz: Lower cutoff frequency in Hz
+        highcut_hz: Upper cutoff frequency in Hz
+        fs: Sampling frequency
+        order: Filter order (default: 6)
+    
+    Returns:
+        b, a: Filter coefficients
+    
+    Reference:
+        Combines highpass and lowpass filtering in one step
+    """
+    nyq = 0.5 * fs
+    low = lowcut_hz / nyq
+    high = highcut_hz / nyq
+    b, a = butter(order, [low, high], btype='band', analog=False)
+    return b, a
+
+
 def wavelet_denoise(sig, wavelet="db4", level=4, thresh_scale=1.0):
     """
     Wavelet denoising for BVP signals using soft thresholding.
@@ -200,13 +244,14 @@ def baseline_correct(sig, fs, return_normalized=True):
         return (corrected - vmin) / (vmax - vmin)
 
 
-def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6, 
+def preprocess_bvp_signal(bvp_raw, fs, highcut_hz=15.0, lowcut_hz=0.5, filter_order=6, 
                           wavelet="db4", denoise_level=4, use_baseline_correction=True, 
-                          normalize=True):
+                          use_highpass=True, normalize=True):
     """
     Complete BVP preprocessing pipeline.
     
     Pipeline:
+    0. Highpass filtering (OPTIONAL - remove DC offset and very low-frequency drift)
     1. Lowpass filtering (remove high-frequency noise)
     2. Wavelet denoising (remove residual noise)
     3. Baseline drift correction (OPTIONAL - remove low-frequency drift)
@@ -215,24 +260,37 @@ def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6,
     Args:
         bvp_raw: Raw BVP signal (1D array)
         fs: Sampling frequency
-        cutoff_hz: Lowpass filter cutoff frequency (default: 15 Hz)
+        highcut_hz: Lowpass filter cutoff frequency (default: 15 Hz)
+        lowcut_hz: Highpass filter cutoff frequency (default: 0.5 Hz)
         filter_order: Butterworth filter order (default: 6)
         wavelet: Wavelet family for denoising (default: "db4")
         denoise_level: Wavelet decomposition level (default: 4)
         use_baseline_correction: Whether to apply baseline drift correction (default: True)
+        use_highpass: Whether to apply highpass filter to remove DC offset (default: True)
         normalize: Whether to normalize to [0,1] (default: True)
     
     Returns:
         Preprocessed BVP signal (standardized with mean=0, std=1)
-    """
-    # Step 1: Lowpass filtering
-    b, a = butter_lowpass(cutoff_hz, fs, order=filter_order)
-    bvp_filtered = filtfilt(b, a, bvp_raw)
     
-    # Step 2: Wavelet denoising
+    Notes:
+        - Highpass at 0.5 Hz removes DC shifts and very slow drift
+        - Lowpass at 15 Hz removes high-frequency noise
+        - Typical BVP signal range: 0.5-4 Hz (30-240 bpm heart rate)
+    """
+    # Step 0: Highpass filtering (remove DC offset and very low-frequency drift)
+    if use_highpass:
+        # Use bandpass filter (combines highpass + lowpass in one step)
+        b, a = butter_bandpass(lowcut_hz, highcut_hz, fs, order=filter_order)
+        bvp_filtered = filtfilt(b, a, bvp_raw)
+    else:
+        # Use only lowpass filter
+        b, a = butter_lowpass(highcut_hz, fs, order=filter_order)
+        bvp_filtered = filtfilt(b, a, bvp_raw)
+    
+    # Step 1: Wavelet denoising
     bvp_denoised = wavelet_denoise(bvp_filtered, wavelet=wavelet, level=denoise_level)
     
-    # Step 3: Baseline correction (OPTIONAL)
+    # Step 2: Baseline correction (OPTIONAL)
     if use_baseline_correction:
         bvp_normalized = baseline_correct(bvp_denoised, fs, return_normalized=normalize)
     else:
@@ -246,7 +304,7 @@ def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6,
         else:
             bvp_normalized = bvp_denoised
     
-    # Step 4: Standardization (z-score)
+    # Step 3: Standardization (z-score)
     bvp_mean = bvp_normalized.mean()
     bvp_std = bvp_normalized.std()
     if bvp_std < 1e-8:
@@ -382,11 +440,13 @@ def load_bvp_data(data_root, config):
             bvp_processed = preprocess_bvp_signal(
                 bvp_raw, 
                 fs=config.BVP_FS,
-                cutoff_hz=15.0,
+                highcut_hz=15.0,
+                lowcut_hz=0.5,
                 filter_order=6,
                 wavelet="db4",
                 denoise_level=4,
                 use_baseline_correction=use_baseline_correction,
+                use_highpass=True,
                 normalize=True
             )
             
