@@ -45,7 +45,7 @@ from eeg_data_loader import (
 class Config:
     """EEG-specific configuration."""
     # Paths
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-output-s/Output_KNN_ASR"
+    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
     # DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
     # DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-outputv2-0/ASR_output"
     
