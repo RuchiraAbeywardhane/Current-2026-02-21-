@@ -44,7 +44,7 @@ class TestConfig:
     BVP_OVERLAP = 0.0
     
     # BVP Preprocessing
-    USE_BVP_BASELINE_CORRECTION = True
+    USE_BVP_BASELINE_CORRECTION = False
     
     # Encoder parameters
     INPUT_SIZE = 1  # Raw BVP signal
