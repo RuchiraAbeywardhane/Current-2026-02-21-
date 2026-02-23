@@ -579,6 +579,32 @@ def load_bvp_data(data_root, config):
             with open(fpath, "r") as f:
                 data = json.load(f)
             
+            # 🔍 DEBUG: Inspect JSON structure for first few files
+            if successful_files < 3:
+                print(f"\n🔍 DEBUG - Inspecting file: {fname}")
+                print(f"   📋 Available JSON fields: {list(data.keys())}")
+                
+                # Check if BVP field exists and show its structure
+                if "BVP" in data:
+                    bvp_test = data["BVP"]
+                    print(f"   ✅ 'BVP' field found!")
+                    print(f"      Type: {type(bvp_test)}")
+                    print(f"      Length: {len(bvp_test) if isinstance(bvp_test, (list, dict)) else 'N/A'}")
+                    if isinstance(bvp_test, list) and len(bvp_test) > 0:
+                        print(f"      First element type: {type(bvp_test[0])}")
+                        print(f"      First 3 elements: {bvp_test[:3]}")
+                else:
+                    print(f"   ❌ 'BVP' field NOT found!")
+                    print(f"   💡 Checking alternative field names...")
+                    
+                    # Check for alternative field names
+                    possible_fields = ["PPG", "HR", "SAMSUNG_BVP", "HeartRate", "BVP_RAW", "ppg", "bvp"]
+                    for field in possible_fields:
+                        if field in data:
+                            print(f"      ✅ Found '{field}' field (length: {len(data[field]) if isinstance(data[field], (list, dict)) else 'N/A'})")
+                            if isinstance(data[field], list) and len(data[field]) > 0:
+                                print(f"         Sample: {data[field][:3]}")
+            
             # Extract BVP data
             bvp_data = data.get("BVP", [])
             
