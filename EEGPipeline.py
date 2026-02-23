@@ -45,8 +45,8 @@ from eeg_data_loader_emognitionRaw import (
 class Config:
     """EEG-specific configuration."""
     # Paths
-    # DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
+    DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
+    # DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
     
     # Common parameters
     NUM_CLASSES = 4
