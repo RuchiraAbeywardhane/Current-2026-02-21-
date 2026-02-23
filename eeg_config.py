@@ -24,7 +24,7 @@ class Config:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Baseline reduction (InvBase method)
-    USE_BASELINE_REDUCTION = True
+    USE_BASELINE_REDUCTION = True  # For EEG
     
     # Data split mode
     SUBJECT_INDEPENDENT = True
