@@ -413,7 +413,7 @@ def load_bvp_data(data_root, config):
     
     # Check preprocessing flags
     use_baseline_correction = getattr(config, 'USE_BVP_BASELINE_CORRECTION', False)
-    use_baseline_reduction = getattr(config, 'USE_BVP_BASELINE_REDUCTION', True)
+    use_baseline_reduction = getattr(config, 'USE_BVP_BASELINE_REDUCTION', False)
     
     if use_baseline_correction:
         print(f"\n🔧 BVP Baseline Correction (drift removal): ENABLED")
