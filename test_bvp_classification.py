@@ -72,8 +72,8 @@ class TestConfig:
     BVP_OVERLAP = 0.0
     
     # Preprocessing flags
-    USE_BVP_BASELINE_CORRECTION = True   # Keep this enabled for drift removal
-    USE_BVP_BASELINE_REDUCTION = False   # ✅ DISABLE THIS - set to False
+    USE_BVP_BASELINE_CORRECTION = False   # Keep this enabled for drift removal
+    USE_BVP_BASELINE_REDUCTION = True   # ✅ DISABLE THIS - set to False
     
     # Subject-independent split
     SUBJECT_INDEPENDENT = True
