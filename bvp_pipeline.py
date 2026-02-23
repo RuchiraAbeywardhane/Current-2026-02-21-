@@ -227,9 +227,9 @@ def train_model(model, train_loader, val_loader, config, save_path='best_bvp_mod
     optimizer = optim.Adam(model.parameters(), lr=config.BVP_LR, 
                           weight_decay=config.BVP_WEIGHT_DECAY)
     
-    # Learning rate scheduler
+    # Learning rate scheduler (removed verbose parameter for PyTorch compatibility)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=5, verbose=True
+        optimizer, mode='max', factor=0.5, patience=5
     )
     
     # Early stopping
@@ -262,7 +262,13 @@ def train_model(model, train_loader, val_loader, config, save_path='best_bvp_mod
         val_loss, val_acc, val_f1, _, _ = validate(model, val_loader, criterion, device)
         
         # Update scheduler
+        old_lr = optimizer.param_groups[0]['lr']
         scheduler.step(val_acc)
+        new_lr = optimizer.param_groups[0]['lr']
+        
+        # Print learning rate change
+        if new_lr != old_lr:
+            print(f"  📉 Learning rate reduced: {old_lr:.6f} -> {new_lr:.6f}")
         
         # Save history
         history['train_loss'].append(train_loss)
