@@ -59,16 +59,16 @@ def test_encoder_architecture():
     time_steps = config.BVP_WINDOW_SEC * config.BVP_FS  # 640 samples
     
     # Create dummy data
-    dummy_input = torch.randn(batch_size, time_steps, config.INPUT_SIZE)
+    dummy_input = torch.randn(batch_size, time_steps, config.BVP_INPUT_SIZE)
     print(f"\n📊 Test Input Shape: {dummy_input.shape}")
-    print(f"   [Batch, Time, Features] = [{batch_size}, {time_steps}, {config.INPUT_SIZE}]")
+    print(f"   [Batch, Time, Features] = [{batch_size}, {time_steps}, {config.BVP_INPUT_SIZE}]")
     
     # Test BVPEncoder (Average Pooling)
     print("\n🔹 Testing BVPEncoder (Average Pooling):")
     encoder = BVPEncoder(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        dropout=config.DROPOUT
+        input_size=config.BVP_INPUT_SIZE,
+        hidden_size=config.BVP_HIDDEN_SIZE,
+        dropout=config.BVP_DROPOUT
     ).to(config.DEVICE)
     
     dummy_input = dummy_input.to(config.DEVICE)
@@ -76,20 +76,20 @@ def test_encoder_architecture():
     # Test context output
     context = encoder(dummy_input, return_sequence=False)
     print(f"   ✅ Context output shape: {context.shape}")
-    print(f"      Expected: [{batch_size}, {config.HIDDEN_SIZE * 2}]")
+    print(f"      Expected: [{batch_size}, {config.BVP_HIDDEN_SIZE * 2}]")
     
     # Test sequence output
     context, features = encoder(dummy_input, return_sequence=True)
     print(f"   ✅ Context shape: {context.shape}")
     print(f"   ✅ Features shape: {features.shape}")
-    print(f"      Expected: [{batch_size}, {time_steps}, {config.HIDDEN_SIZE * 2}]")
+    print(f"      Expected: [{batch_size}, {time_steps}, {config.BVP_HIDDEN_SIZE * 2}]")
     
     # Test BVPEncoderWithAttention
     print("\n🔹 Testing BVPEncoderWithAttention:")
     encoder_attn = BVPEncoderWithAttention(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        dropout=config.DROPOUT
+        input_size=config.BVP_INPUT_SIZE,
+        hidden_size=config.BVP_HIDDEN_SIZE,
+        dropout=config.BVP_DROPOUT
     ).to(config.DEVICE)
     
     context_attn = encoder_attn(dummy_input, return_sequence=False)
@@ -110,15 +110,15 @@ def test_parameter_count():
     print("="*80)
     
     encoder = BVPEncoder(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        dropout=config.DROPOUT
+        input_size=config.BVP_INPUT_SIZE,
+        hidden_size=config.BVP_HIDDEN_SIZE,
+        dropout=config.BVP_DROPOUT
     )
     
     encoder_attn = BVPEncoderWithAttention(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        dropout=config.DROPOUT
+        input_size=config.BVP_INPUT_SIZE,
+        hidden_size=config.BVP_HIDDEN_SIZE,
+        dropout=config.BVP_DROPOUT
     )
     
     # Count parameters
@@ -178,9 +178,9 @@ def test_with_real_data():
         
         # Test encoder
         encoder = BVPEncoder(
-            input_size=config.INPUT_SIZE,
-            hidden_size=config.HIDDEN_SIZE,
-            dropout=config.DROPOUT
+            input_size=config.BVP_INPUT_SIZE,
+            hidden_size=config.BVP_HIDDEN_SIZE,
+            dropout=config.BVP_DROPOUT
         ).to(config.DEVICE)
         
         encoder.eval()
@@ -196,9 +196,9 @@ def test_with_real_data():
         
         # Test attention encoder
         encoder_attn = BVPEncoderWithAttention(
-            input_size=config.INPUT_SIZE,
-            hidden_size=config.HIDDEN_SIZE,
-            dropout=config.DROPOUT
+            input_size=config.BVP_INPUT_SIZE,
+            hidden_size=config.BVP_HIDDEN_SIZE,
+            dropout=config.BVP_DROPOUT
         ).to(config.DEVICE)
         
         encoder_attn.eval()
@@ -351,20 +351,20 @@ def test_batch_processing():
     print("="*80)
     
     encoder = BVPEncoder(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        dropout=config.DROPOUT
+        input_size=config.BVP_INPUT_SIZE,
+        hidden_size=config.BVP_HIDDEN_SIZE,
+        dropout=config.BVP_DROPOUT
     ).to(config.DEVICE)
     
     encoder.eval()
     
-    time_steps = config.BVP_WINDOW_SEC * config.BVP_FS
+    time_steps = int(config.BVP_WINDOW_SEC * config.BVP_FS)
     batch_sizes = [1, 4, 8, 16, 32, 64]
     
     print(f"\n📊 Testing different batch sizes:")
     
     for batch_size in batch_sizes:
-        dummy_input = torch.randn(batch_size, time_steps, config.INPUT_SIZE).to(config.DEVICE)
+        dummy_input = torch.randn(batch_size, time_steps, config.BVP_INPUT_SIZE).to(config.DEVICE)
         
         with torch.no_grad():
             context = encoder(dummy_input)
@@ -431,9 +431,9 @@ def test_classification_head():
         
         # Initialize model with ATTENTION encoder for better performance
         encoder = BVPEncoderWithAttention(  # Changed from BVPEncoder
-            input_size=config.INPUT_SIZE,
-            hidden_size=config.HIDDEN_SIZE,
-            dropout=config.DROPOUT
+            input_size=config.BVP_INPUT_SIZE,
+            hidden_size=config.BVP_HIDDEN_SIZE,
+            dropout=config.BVP_DROPOUT
         )
         model = BVPClassifier(encoder, config.NUM_CLASSES).to(config.DEVICE)
         
@@ -496,7 +496,7 @@ def test_classification_head():
             X_train = X_tensor[:n_train]
             y_train = y_tensor[:n_train]
             X_val = X_tensor[n_train:n_train+n_val]
-            y_val = y_tensor[n_train:n_train+n_val]
+            y_val = y_tensor[n_train+n_val]
             X_test = X_tensor[n_train+n_val:]
             y_test = y_tensor[n_train+n_val:]
         
@@ -686,9 +686,9 @@ def main():
     print("BVP ENCODER TEST SUITE")
     print("="*80)
     print(f"Device: {config.DEVICE}")
-    print(f"Input size: {config.INPUT_SIZE}")
-    print(f"Hidden size: {config.HIDDEN_SIZE}")
-    print(f"Output size: {config.HIDDEN_SIZE * 2}")
+    print(f"Input size: {config.BVP_INPUT_SIZE}")
+    print(f"Hidden size: {config.BVP_HIDDEN_SIZE}")
+    print(f"Output size: {config.BVP_HIDDEN_SIZE * 2}")
     print("="*80)
     
     # Test 1: Architecture
