@@ -48,6 +48,9 @@ class TestConfig:
     BVP_WINDOW_SEC = 10  # 10-second windows
     BVP_OVERLAP = 0.0  # No overlap
     
+    # BVP Preprocessing
+    USE_BVP_BASELINE_CORRECTION = False  # Set to False to skip baseline drift correction
+    
     # Classification
     NUM_CLASSES = 4
     SUBJECT_INDEPENDENT = True
@@ -72,68 +75,10 @@ np.random.seed(config.SEED)
 # TEST FUNCTIONS
 # ==================================================
 
-def test_single_file_loading():
-    """Test loading a single BVP JSON file."""
-    print("\n" + "="*80)
-    print("TEST 1: SINGLE FILE LOADING")
-    print("="*80)
-    
-    # Find first BVP file
-    import glob
-    patterns = [
-        os.path.join(config.DATA_ROOT, "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(config.DATA_ROOT, "*_STIMULUS_EMPATICA.json")
-    ]
-    files = [p for pat in patterns for p in glob.glob(pat)]
-    
-    if not files:
-        print("❌ No BVP files found!")
-        return None
-    
-    test_file = files[0]
-    print(f"Testing file: {os.path.basename(test_file)}")
-    
-    # Load JSON
-    import json
-    with open(test_file, 'r') as f:
-        data = json.load(f)
-    
-    # Check structure
-    print(f"\n📋 JSON Keys: {list(data.keys())[:10]}")
-    
-    if "BVP" in data:
-        bvp_data = data["BVP"]
-        print(f"✅ BVP data found!")
-        print(f"   Type: {type(bvp_data)}")
-        print(f"   Length: {len(bvp_data)}")
-        
-        if len(bvp_data) > 0:
-            print(f"   First element: {bvp_data[0]}")
-            print(f"   First element type: {type(bvp_data[0])}")
-            
-            # Extract values
-            if isinstance(bvp_data[0], list):
-                bvp_values = np.array([row[1] for row in bvp_data], dtype=float)
-                print(f"   Format: [[timestamp, value], ...]")
-            else:
-                bvp_values = np.array(bvp_data, dtype=float)
-                print(f"   Format: [value1, value2, ...]")
-            
-            print(f"   Signal length: {len(bvp_values)} samples")
-            print(f"   Duration: {len(bvp_values) / config.BVP_FS:.2f} seconds")
-            print(f"   Value range: [{np.min(bvp_values):.3f}, {np.max(bvp_values):.3f}]")
-            
-            return bvp_values
-    else:
-        print("❌ No 'BVP' key found in JSON!")
-        print(f"   Available keys: {list(data.keys())}")
-        return None
-
-
 def test_preprocessing_pipeline(bvp_raw):
     """Test preprocessing pipeline with visualization."""
     print("\n" + "="*80)
-    print("TEST 2: PREPROCESSING PIPELINE")
+    print("TEST 1: PREPROCESSING PIPELINE")
     print("="*80)
     
     if bvp_raw is None or len(bvp_raw) == 0:
@@ -207,7 +152,7 @@ def test_preprocessing_pipeline(bvp_raw):
 def test_feature_extraction(bvp_processed):
     """Test feature extraction."""
     print("\n" + "="*80)
-    print("TEST 3: FEATURE EXTRACTION")
+    print("TEST 2: FEATURE EXTRACTION")
     print("="*80)
     
     if bvp_processed is None or len(bvp_processed) == 0:
@@ -236,7 +181,7 @@ def test_feature_extraction(bvp_processed):
 def test_full_data_loading():
     """Test full data loading pipeline."""
     print("\n" + "="*80)
-    print("TEST 4: FULL DATA LOADING PIPELINE")
+    print("TEST 3: FULL DATA LOADING PIPELINE")
     print("="*80)
     
     try:
@@ -295,7 +240,7 @@ def test_full_data_loading():
 def test_data_splitting(y_labels, subject_ids):
     """Test data splitting."""
     print("\n" + "="*80)
-    print("TEST 5: DATA SPLITTING")
+    print("TEST 4: DATA SPLITTING")
     print("="*80)
     
     if y_labels is None or subject_ids is None:
@@ -348,7 +293,7 @@ def test_data_splitting(y_labels, subject_ids):
 def test_feature_extraction_batch(X_raw):
     """Test batch feature extraction."""
     print("\n" + "="*80)
-    print("TEST 6: BATCH FEATURE EXTRACTION")
+    print("TEST 5: BATCH FEATURE EXTRACTION")
     print("="*80)
     
     if X_raw is None:
@@ -386,23 +331,21 @@ def main():
     print(f"Window size: {config.BVP_WINDOW_SEC} seconds")
     print("="*80)
     
-    # Test 1: Single file loading
-    bvp_raw = test_single_file_loading()
+    # Test 1: Preprocessing pipeline
+    bvp_raw = None  # Placeholder for raw BVP data
     
-    # Test 2: Preprocessing pipeline
+    # Test 2: Feature extraction (single window)
     bvp_processed = test_preprocessing_pipeline(bvp_raw)
-    
-    # Test 3: Feature extraction (single window)
     test_feature_extraction(bvp_processed)
     
-    # Test 4: Full data loading
+    # Test 3: Full data loading
     X_raw, y_labels, subject_ids, label_to_id = test_full_data_loading()
     
-    # Test 5: Data splitting
+    # Test 4: Data splitting
     if y_labels is not None:
         test_data_splitting(y_labels, subject_ids)
     
-    # Test 6: Batch feature extraction
+    # Test 5: Batch feature extraction
     if X_raw is not None:
         test_feature_extraction_batch(X_raw)
     

@@ -201,14 +201,15 @@ def baseline_correct(sig, fs, return_normalized=True):
 
 
 def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6, 
-                          wavelet="db4", denoise_level=4, normalize=True):
+                          wavelet="db4", denoise_level=4, use_baseline_correction=True, 
+                          normalize=True):
     """
     Complete BVP preprocessing pipeline.
     
     Pipeline:
     1. Lowpass filtering (remove high-frequency noise)
     2. Wavelet denoising (remove residual noise)
-    3. Baseline drift correction (remove low-frequency drift)
+    3. Baseline drift correction (OPTIONAL - remove low-frequency drift)
     4. Normalization and standardization
     
     Args:
@@ -218,6 +219,7 @@ def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6,
         filter_order: Butterworth filter order (default: 6)
         wavelet: Wavelet family for denoising (default: "db4")
         denoise_level: Wavelet decomposition level (default: 4)
+        use_baseline_correction: Whether to apply baseline drift correction (default: True)
         normalize: Whether to normalize to [0,1] (default: True)
     
     Returns:
@@ -230,8 +232,19 @@ def preprocess_bvp_signal(bvp_raw, fs, cutoff_hz=15.0, filter_order=6,
     # Step 2: Wavelet denoising
     bvp_denoised = wavelet_denoise(bvp_filtered, wavelet=wavelet, level=denoise_level)
     
-    # Step 3: Baseline correction
-    bvp_normalized = baseline_correct(bvp_denoised, fs, return_normalized=normalize)
+    # Step 3: Baseline correction (OPTIONAL)
+    if use_baseline_correction:
+        bvp_normalized = baseline_correct(bvp_denoised, fs, return_normalized=normalize)
+    else:
+        # Skip baseline correction - just normalize if requested
+        if normalize:
+            vmin, vmax = np.min(bvp_denoised), np.max(bvp_denoised)
+            if np.isclose(vmin, vmax):
+                bvp_normalized = np.zeros_like(bvp_denoised)
+            else:
+                bvp_normalized = (bvp_denoised - vmin) / (vmax - vmin)
+        else:
+            bvp_normalized = bvp_denoised
     
     # Step 4: Standardization (z-score)
     bvp_mean = bvp_normalized.mean()
@@ -257,6 +270,8 @@ def load_bvp_data(data_root, config):
     Args:
         data_root: Root directory containing BVP JSON files
         config: Configuration object with parameters (window size, overlap, etc.)
+                Must have: BVP_FS, BVP_WINDOW_SEC, BVP_OVERLAP, SUPERCLASS_MAP
+                Optional: USE_BVP_BASELINE_CORRECTION (default: True)
     
     Returns:
         X_raw: (N, T) - Raw BVP windows (preprocessed)
@@ -288,6 +303,13 @@ def load_bvp_data(data_root, config):
     print(f"\n📁 Sample files:")
     for f in files[:3]:
         print(f"   {os.path.basename(f)}")
+    
+    # Check if baseline correction is enabled (default: True)
+    use_baseline_correction = getattr(config, 'USE_BVP_BASELINE_CORRECTION', True)
+    if use_baseline_correction:
+        print(f"\n🔧 BVP Baseline Correction: ENABLED")
+    else:
+        print(f"\n🔧 BVP Baseline Correction: DISABLED")
     
     # Prepare windowing parameters
     all_windows, all_labels, all_subjects = [], [], []
@@ -356,7 +378,7 @@ def load_bvp_data(data_root, config):
                 skipped_reasons['insufficient_length'] += 1
                 continue
             
-            # Apply preprocessing pipeline
+            # Apply preprocessing pipeline with configurable baseline correction
             bvp_processed = preprocess_bvp_signal(
                 bvp_raw, 
                 fs=config.BVP_FS,
@@ -364,6 +386,7 @@ def load_bvp_data(data_root, config):
                 filter_order=6,
                 wavelet="db4",
                 denoise_level=4,
+                use_baseline_correction=use_baseline_correction,
                 normalize=True
             )
             
