@@ -191,6 +191,10 @@ def baseline_correct(sig, fs, return_normalized=True):
     This method identifies local minima (diastolic points) in the BVP signal,
     interpolates a baseline from these points, and subtracts it to remove drift.
     
+    NOTE: This is DIFFERENT from Baseline Reduction (InvBase method).
+    - Baseline Correction: Removes drift within the same signal
+    - Baseline Reduction: Uses separate baseline recordings to normalize
+    
     Args:
         sig: Input BVP signal (1D array)
         fs: Sampling frequency
@@ -242,6 +246,50 @@ def baseline_correct(sig, fs, return_normalized=True):
         return np.zeros_like(corrected)
     else:
         return (corrected - vmin) / (vmax - vmin)
+
+
+def apply_baseline_reduction(signal, baseline, eps=1e-12):
+    """
+    Apply Baseline Reduction using InvBase method (similar to EEG).
+    
+    This method uses SEPARATE baseline recordings (resting state) to normalize
+    the trial signal and reduce inter-subject variability in BVP patterns.
+    
+    Method: Divide trial FFT by baseline FFT in frequency domain
+    
+    Args:
+        signal: Trial BVP signal (1D array)
+        baseline: Baseline BVP signal from resting state (1D array)
+        eps: Small constant to avoid division by zero (default: 1e-12)
+    
+    Returns:
+        Baseline-reduced signal (same length as input)
+    
+    Reference:
+        InvBase method adapted for BVP signals to reduce inter-subject variability
+        Similar to EEG baseline reduction for normalizing physiological patterns
+    
+    Notes:
+        - Requires separate baseline recordings per subject
+        - Reduces subject-specific cardiovascular patterns
+        - Helps model generalize across subjects
+    """
+    signal = np.asarray(signal, dtype=float)
+    baseline = np.asarray(baseline, dtype=float)
+    
+    # FFT of trial signal
+    FFT_trial = np.fft.rfft(signal, axis=0)
+    
+    # FFT of baseline signal
+    FFT_baseline = np.fft.rfft(baseline, axis=0)
+    
+    # Divide trial by baseline (with epsilon to avoid division by zero)
+    FFT_reduced = FFT_trial / (np.abs(FFT_baseline) + eps)
+    
+    # Inverse FFT to get time-domain signal
+    signal_reduced = np.fft.irfft(FFT_reduced, n=len(signal), axis=0)
+    
+    return signal_reduced.astype(np.float32)
 
 
 def preprocess_bvp_signal(bvp_raw, fs, highcut_hz=15.0, lowcut_hz=0.5, filter_order=6, 
@@ -330,6 +378,7 @@ def load_bvp_data(data_root, config):
         config: Configuration object with parameters (window size, overlap, etc.)
                 Must have: BVP_FS, BVP_WINDOW_SEC, BVP_OVERLAP, SUPERCLASS_MAP
                 Optional: USE_BVP_BASELINE_CORRECTION (default: True)
+                Optional: USE_BVP_BASELINE_REDUCTION (default: False)
     
     Returns:
         X_raw: (N, T) - Raw BVP windows (preprocessed)
@@ -362,12 +411,78 @@ def load_bvp_data(data_root, config):
     for f in files[:3]:
         print(f"   {os.path.basename(f)}")
     
-    # Check if baseline correction is enabled (default: True)
+    # Check preprocessing flags
     use_baseline_correction = getattr(config, 'USE_BVP_BASELINE_CORRECTION', True)
+    use_baseline_reduction = getattr(config, 'USE_BVP_BASELINE_REDUCTION', False)
+    
     if use_baseline_correction:
-        print(f"\n🔧 BVP Baseline Correction: ENABLED")
+        print(f"\n🔧 BVP Baseline Correction (drift removal): ENABLED")
     else:
-        print(f"\n🔧 BVP Baseline Correction: DISABLED")
+        print(f"\n🔧 BVP Baseline Correction (drift removal): DISABLED")
+    
+    if use_baseline_reduction:
+        print(f"🔧 BVP Baseline Reduction (InvBase method): ENABLED")
+    else:
+        print(f"🔧 BVP Baseline Reduction (InvBase method): DISABLED")
+    
+    # Load baseline recordings if baseline reduction is enabled
+    baseline_dict = {}
+    if use_baseline_reduction:
+        print(f"\n📂 Loading baseline recordings...")
+        baseline_patterns = [
+            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
+        ]
+        baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
+        print(f"   Found {len(baseline_files)} baseline files")
+        
+        for bpath in baseline_files:
+            bname = os.path.basename(bpath)
+            parts = bname.split("_")
+            if len(parts) < 2:
+                continue
+            subject = parts[0]
+            
+            try:
+                with open(bpath, "r") as f:
+                    bdata = json.load(f)
+                
+                bvp_baseline = bdata.get("BVP", [])
+                if not bvp_baseline:
+                    continue
+                
+                # Handle different formats
+                if isinstance(bvp_baseline[0], list):
+                    baseline_raw = np.array([row[1] for row in bvp_baseline], dtype=float)
+                else:
+                    baseline_raw = _to_num(bvp_baseline)
+                
+                baseline_raw = _interp_nan(baseline_raw)
+                
+                # Apply same preprocessing to baseline
+                baseline_processed = preprocess_bvp_signal(
+                    baseline_raw,
+                    fs=config.BVP_FS,
+                    highcut_hz=15.0,
+                    lowcut_hz=0.5,
+                    filter_order=6,
+                    wavelet="db4",
+                    denoise_level=4,
+                    use_baseline_correction=use_baseline_correction,
+                    use_highpass=True,
+                    normalize=False  # Don't normalize baseline yet
+                )
+                
+                baseline_dict[subject] = baseline_processed
+                
+            except Exception as e:
+                continue
+        
+        print(f"   Loaded baselines for {len(baseline_dict)} subjects")
+        if len(baseline_dict) > 0:
+            print(f"   Subjects with baselines: {sorted(baseline_dict.keys())}")
     
     # Prepare windowing parameters
     all_windows, all_labels, all_subjects = [], [], []
@@ -380,7 +495,8 @@ def load_bvp_data(data_root, config):
         'unknown_emotion': 0,
         'no_data': 0,
         'insufficient_length': 0,
-        'parse_error': 0
+        'parse_error': 0,
+        'no_baseline': 0
     }
     
     successful_files = 0
@@ -406,6 +522,11 @@ def load_bvp_data(data_root, config):
             skipped_reasons['unknown_emotion'] += 1
             continue
         
+        # Check if baseline is required but missing
+        if use_baseline_reduction and subject not in baseline_dict:
+            skipped_reasons['no_baseline'] += 1
+            continue
+        
         superclass = config.SUPERCLASS_MAP[emotion]
         
         try:
@@ -413,7 +534,6 @@ def load_bvp_data(data_root, config):
                 data = json.load(f)
             
             # Extract BVP data
-            # Format can be: [[timestamp, value], ...] or direct array
             bvp_data = data.get("BVP", [])
             
             if not bvp_data:
@@ -422,10 +542,8 @@ def load_bvp_data(data_root, config):
             
             # Handle different BVP data formats
             if isinstance(bvp_data[0], list):
-                # Format: [[timestamp, value], ...]
                 bvp_raw = np.array([row[1] for row in bvp_data], dtype=float)
             else:
-                # Format: [value1, value2, ...]
                 bvp_raw = _to_num(bvp_data)
             
             # Interpolate any NaN values
@@ -436,7 +554,7 @@ def load_bvp_data(data_root, config):
                 skipped_reasons['insufficient_length'] += 1
                 continue
             
-            # Apply preprocessing pipeline with configurable baseline correction
+            # Apply preprocessing pipeline
             bvp_processed = preprocess_bvp_signal(
                 bvp_raw, 
                 fs=config.BVP_FS,
@@ -447,8 +565,35 @@ def load_bvp_data(data_root, config):
                 denoise_level=4,
                 use_baseline_correction=use_baseline_correction,
                 use_highpass=True,
-                normalize=True
+                normalize=not use_baseline_reduction  # Don't normalize if using baseline reduction
             )
+            
+            # Apply baseline reduction if enabled
+            if use_baseline_reduction:
+                subject_baseline = baseline_dict[subject]
+                
+                # Match baseline length to signal
+                if len(subject_baseline) < len(bvp_processed):
+                    # Repeat baseline to match signal length
+                    n_repeats = int(np.ceil(len(bvp_processed) / len(subject_baseline)))
+                    subject_baseline = np.tile(subject_baseline, n_repeats)[:len(bvp_processed)]
+                elif len(subject_baseline) > len(bvp_processed):
+                    # Truncate baseline
+                    subject_baseline = subject_baseline[:len(bvp_processed)]
+                
+                # Apply InvBase method
+                bvp_processed = apply_baseline_reduction(bvp_processed, subject_baseline)
+                
+                # Normalize after reduction
+                vmin, vmax = np.min(bvp_processed), np.max(bvp_processed)
+                if not np.isclose(vmin, vmax):
+                    bvp_processed = (bvp_processed - vmin) / (vmax - vmin)
+            
+            # Standardize (z-score)
+            bvp_mean = bvp_processed.mean()
+            bvp_std = bvp_processed.std()
+            if bvp_std > 1e-8:
+                bvp_processed = (bvp_processed - bvp_mean) / bvp_std
             
             # Create windows with overlap
             for start in range(0, L - win_samples + 1, step_samples):
