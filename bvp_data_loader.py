@@ -457,21 +457,32 @@ def load_bvp_data(data_root, config):
         print(f"\n📂 Loading baseline recordings...")
         
         # Search for baseline files based on device selection
+        # Updated patterns to match actual baseline file naming convention
         baseline_patterns = []
         if bvp_device in ['samsung_watch', 'both']:
             baseline_patterns.extend([
                 os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-                os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json")
+                os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
+                os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),  # ✅ Added
+                os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")  # ✅ Added
             ])
         
         if bvp_device in ['empatica', 'both']:
             baseline_patterns.extend([
                 os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
-                os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
+                os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json"),
+                os.path.join(data_root, "*_BASELINE_STIMULUS_EMPATICA.json"),  # ✅ Added
+                os.path.join(data_root, "*", "*_BASELINE_STIMULUS_EMPATICA.json")  # ✅ Added
             ])
         
         baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
         print(f"   Found {len(baseline_files)} baseline files")
+        
+        # Debug: Show first few baseline files found
+        if baseline_files:
+            print(f"   📋 Sample baseline files:")
+            for bf in baseline_files[:3]:
+                print(f"      - {os.path.basename(bf)}")
         
         for bpath in baseline_files:
             bname = os.path.basename(bpath)

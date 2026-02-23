@@ -72,8 +72,8 @@ class TestConfig:
     BVP_OVERLAP = 0.0
     
     # Preprocessing flags
-    USE_BVP_BASELINE_CORRECTION = False
-    USE_BVP_BASELINE_REDUCTION = True  # Set to True if you have baseline recordings
+    USE_BVP_BASELINE_CORRECTION = True   # Keep this enabled for drift removal
+    USE_BVP_BASELINE_REDUCTION = False   # ✅ DISABLE THIS - set to False
     
     # Subject-independent split
     SUBJECT_INDEPENDENT = True
@@ -340,6 +340,165 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
 # ==================================================
 # VISUALIZATION FUNCTIONS
 # ==================================================
+
+def debug_baseline_matching(data_root, bvp_device='samsung_watch'):
+    """Debug baseline file matching."""
+    import glob
+    import json
+    
+    print("\n" + "="*80)
+    print("DEBUG: BASELINE FILE MATCHING")
+    print("="*80)
+    
+    # Find baseline files
+    baseline_patterns = []
+    if bvp_device in ['samsung_watch', 'both']:
+        baseline_patterns.extend([
+            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json")
+        ])
+    
+    if bvp_device in ['empatica', 'both']:
+        baseline_patterns.extend([
+            os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json")
+        ])
+    
+    baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
+    
+    print(f"\n📂 Found {len(baseline_files)} baseline files:")
+    for i, bf in enumerate(baseline_files[:5], 1):
+        basename = os.path.basename(bf)
+        parts = basename.split("_")
+        subject = parts[0] if parts else "UNKNOWN"
+        print(f"   {i}. {basename}")
+        print(f"      → Subject ID: {subject}")
+    
+    if len(baseline_files) > 5:
+        print(f"   ... and {len(baseline_files) - 5} more")
+    
+    # Find stimulus files
+    stimulus_patterns = []
+    if bvp_device in ['samsung_watch', 'both']:
+        stimulus_patterns.extend([
+            os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+        ])
+    
+    if bvp_device in ['empatica', 'both']:
+        stimulus_patterns.extend([
+            os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
+        ])
+    
+    stimulus_files = sorted({p for pat in stimulus_patterns for p in glob.glob(pat)})
+    
+    print(f"\n📂 Found {len(stimulus_files)} stimulus files (showing first 10):")
+    
+    for i, sf in enumerate(stimulus_files[:10], 1):
+        basename = os.path.basename(sf)
+        parts = basename.split("_")
+        subject = parts[0] if parts else "UNKNOWN"
+        emotion = parts[1] if len(parts) > 1 else "UNKNOWN"
+        print(f"   {i}. {basename}")
+        print(f"      → Subject: {subject}, Emotion: {emotion}")
+    
+    if len(stimulus_files) > 10:
+        print(f"   ... and {len(stimulus_files) - 10} more")
+    
+    # Extract all unique subjects
+    all_stimulus_subjects = set()
+    stimulus_emotions = set()
+    for sf in stimulus_files:
+        basename = os.path.basename(sf)
+        parts = basename.split("_")
+        if parts:
+            all_stimulus_subjects.add(parts[0])
+        if len(parts) > 1:
+            stimulus_emotions.add(parts[1])
+    
+    all_baseline_subjects = set()
+    for bf in baseline_files:
+        basename = os.path.basename(bf)
+        parts = basename.split("_")
+        if parts:
+            all_baseline_subjects.add(parts[0])
+    
+    print(f"\n📊 Subject Summary:")
+    print(f"   Unique subjects in STIMULUS files: {len(all_stimulus_subjects)}")
+    print(f"   Stimulus subjects: {sorted(all_stimulus_subjects)[:20]}")
+    if len(all_stimulus_subjects) > 20:
+        print(f"   ... and {len(all_stimulus_subjects) - 20} more")
+    
+    print(f"\n   Unique subjects in BASELINE files: {len(all_baseline_subjects)}")
+    print(f"   Baseline subjects: {sorted(all_baseline_subjects)[:20]}")
+    if len(all_baseline_subjects) > 20:
+        print(f"   ... and {len(all_baseline_subjects) - 20} more")
+    
+    # Check which subjects have baselines
+    subjects_with_baseline = all_stimulus_subjects & all_baseline_subjects
+    subjects_without_baseline = all_stimulus_subjects - all_baseline_subjects
+    
+    print(f"\n🔍 Baseline Matching:")
+    print(f"   ✅ Subjects WITH baseline: {len(subjects_with_baseline)}")
+    if subjects_with_baseline:
+        print(f"      {sorted(subjects_with_baseline)[:20]}")
+        if len(subjects_with_baseline) > 20:
+            print(f"      ... and {len(subjects_with_baseline) - 20} more")
+    
+    print(f"\n   ❌ Subjects WITHOUT baseline: {len(subjects_without_baseline)}")
+    if subjects_without_baseline:
+        print(f"      {sorted(subjects_without_baseline)[:20]}")
+        if len(subjects_without_baseline) > 20:
+            print(f"      ... and {len(subjects_without_baseline) - 20} more")
+    
+    # Show all emotions found
+    print(f"\n🎭 Emotions Found in Dataset ({len(stimulus_emotions)} unique):")
+    for emotion in sorted(stimulus_emotions):
+        print(f"   - {emotion}")
+    
+    # Check which emotions are mapped
+    mapped_emotions = set(config.SUPERCLASS_MAP.keys())
+    unmapped_emotions = stimulus_emotions - mapped_emotions
+    
+    print(f"\n📋 Emotion Mapping Status:")
+    print(f"   ✅ Mapped emotions: {len(mapped_emotions & stimulus_emotions)}")
+    for emotion in sorted(mapped_emotions & stimulus_emotions):
+        print(f"      - {emotion} → {config.SUPERCLASS_MAP[emotion]}")
+    
+    print(f"\n   ❌ Unmapped emotions: {len(unmapped_emotions)}")
+    for emotion in sorted(unmapped_emotions):
+        print(f"      - {emotion} (NOT MAPPED - will be skipped!)")
+    
+    # Provide suggestions
+    if unmapped_emotions:
+        print(f"\n💡 SUGGESTION: Add these emotions to SUPERCLASS_MAP in config:")
+        print(f"   Example mapping to 4 quadrants:")
+        for emotion in sorted(unmapped_emotions):
+            print(f'      "{emotion}": "Q1",  # Update based on valence/arousal')
+    
+    # Check if baseline files are being loaded correctly
+    print(f"\n🧪 Testing Baseline File Loading:")
+    if baseline_files:
+        test_file = baseline_files[0]
+        print(f"   Testing file: {os.path.basename(test_file)}")
+        try:
+            with open(test_file, 'r') as f:
+                data = json.load(f)
+            
+            bvp_baseline = data.get("BVP", [])
+            print(f"   ✅ File loaded successfully")
+            print(f"   BVP data type: {type(bvp_baseline)}")
+            print(f"   BVP length: {len(bvp_baseline)}")
+            if bvp_baseline:
+                print(f"   BVP sample: {bvp_baseline[:3]}")
+        except Exception as e:
+            print(f"   ❌ Error loading file: {e}")
+    
+    print("="*80)
+    
+    return unmapped_emotions
+
 
 def plot_training_history(history, save_path='bvp_classification_training.png'):
     """Plot training history."""
