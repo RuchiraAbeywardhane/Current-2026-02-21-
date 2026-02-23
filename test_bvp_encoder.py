@@ -470,7 +470,7 @@ def test_classification_head():
         
         # Setup training with CLASS WEIGHTS to handle imbalance
         optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5, verbose=True)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=5)
         
         # Calculate class weights for imbalanced dataset
         class_weights = 1.0 / class_counts.float()
