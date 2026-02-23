@@ -46,7 +46,7 @@ class ComparisonConfig:
     """Configuration for dataset comparison."""
     # Dataset paths
     RAW_DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognition"
-    PREPROCESSED_DATA_ROOT = "/kaggle/input/datasets/nethmitb/emognition-processed/Output_KNN_ASR"
+    PREPROCESSED_DATA_ROOT = "/kaggle/input/datasets/ruchiabey/asr-outputv2-0/ASR_output"
     
     # EEG parameters
     EEG_FS = 256.0
