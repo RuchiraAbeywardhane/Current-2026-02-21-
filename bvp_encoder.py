@@ -24,6 +24,8 @@ class BVPEncoder(nn.Module):
     Uses a smaller network compared to EEG since BVP is a slower physiological signal.
     
     Architecture:
+    - Conv1d layer for local feature extraction
+    - BatchNorm1d and ReLU activation
     - BiLSTM with hidden_size=32 (64 total with bidirectional)
     - Global average pooling for temporal compression
     - Output: global physiological context vector
@@ -48,9 +50,19 @@ class BVPEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.output_size = hidden_size * 2  # Bidirectional
         
+        # Conv1d layer for local feature extraction
+        self.conv1d = nn.Conv1d(
+            in_channels=input_size,
+            out_channels=32,
+            kernel_size=5,
+            padding=2
+        )
+        self.batch_norm = nn.BatchNorm1d(32)
+        self.relu = nn.ReLU()
+        
         # Bidirectional LSTM for BVP encoding
         self.bvp_lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=32,  # Changed from input_size to 32 (conv output channels)
             hidden_size=hidden_size,
             num_layers=1,
             bidirectional=True,
@@ -79,6 +91,17 @@ class BVPEncoder(nn.Module):
             If return_sequence=True:
                 (bvp_context, bvp_feat): tuple of global and temporal features
         """
+        # Conv1d expects [B, C, T], so transpose from [B, T, C]
+        x = x.transpose(1, 2)  # [B, T, input_size] -> [B, input_size, T]
+        
+        # Conv1d + BatchNorm + ReLU
+        x = self.conv1d(x)  # [B, 32, T]
+        x = self.batch_norm(x)  # [B, 32, T]
+        x = self.relu(x)  # [B, 32, T]
+        
+        # Transpose back for LSTM [B, C, T] -> [B, T, C]
+        x = x.transpose(1, 2)  # [B, T, 32]
+        
         # LSTM encoding
         # bvp_feat: [B, T, 64]
         bvp_feat, (hidden, cell) = self.bvp_lstm(x)
