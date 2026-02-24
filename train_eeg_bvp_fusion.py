@@ -260,12 +260,6 @@ def main(args):
     sample_weights = class_sample_weights[ytr]
     sample_weights_tensor = torch.from_numpy(sample_weights.astype(np.float32))
     
-    train_sampler = WeightedRandomSampler(
-        weights=sample_weights_tensor,
-        num_samples=len(sample_weights_tensor),
-        replacement=True
-    )
-    
     if not args.disable_bvp:
         # Create multimodal datasets - FIX: Use correct BVP indices
         bvp_tr = bvp_X_raw[train_idx]
@@ -291,7 +285,24 @@ def main(args):
         te_ds = EEGBVPDataset(Xte, yte, subj_te, bvp_te, bvp_yte, bvp_subj_te)
         
         print(f"   Multimodal datasets: Train={len(tr_ds)}, Val={len(va_ds)}, Test={len(te_ds)}")
-    else:
+        
+        # FIX: Recompute sample weights for the ALIGNED dataset size
+        # The multimodal dataset may be smaller than the original EEG dataset
+        aligned_labels = np.array([sample[2] for sample in tr_ds.samples])
+        aligned_class_counts = np.bincount(aligned_labels, minlength=config.NUM_CLASSES).astype(np.float32)
+        aligned_class_weights = 1.0 / np.clip(aligned_class_counts, 1.0, None)
+        aligned_sample_weights = aligned_class_weights[aligned_labels]
+        sample_weights_tensor = torch.from_numpy(aligned_sample_weights.astype(np.float32))
+        
+        print(f"   Class distribution in aligned dataset: {aligned_class_counts}")
+        
+    train_sampler = WeightedRandomSampler(
+        weights=sample_weights_tensor,
+        num_samples=len(sample_weights_tensor),
+        replacement=True
+    )
+    
+    if args.disable_bvp:
         # EEG-only mode
         tr_ds = TensorDataset(torch.from_numpy(Xtr), torch.from_numpy(ytr))
         va_ds = TensorDataset(torch.from_numpy(Xva), torch.from_numpy(yva))
