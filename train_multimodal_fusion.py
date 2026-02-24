@@ -334,7 +334,8 @@ def main(args):
     bvp_config.USE_BVP_BASELINE_REDUCTION = args.use_baseline_reduction
     bvp_config.USE_BVP_BASELINE_CORRECTION = False
     
-    bvp_X_raw, bvp_y, bvp_subjects, _, bvp_label_map = load_bvp_data(
+    # Fix: load_bvp_data returns 4 values, not 5
+    bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(
         args.bvp_data_root, bvp_config
     )
     
