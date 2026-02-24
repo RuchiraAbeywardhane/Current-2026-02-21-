@@ -385,7 +385,8 @@ def main(args):
                 n_classes=config.NUM_CLASSES,
                 shared_dim=128,
                 num_heads=4,
-                use_bvp=True
+                use_bvp=True,
+                use_cross_attention=not args.disable_cross_attention  # Allow disabling cross-attention
             )
         else:
             raise ValueError(f"Unknown fusion type: {args.fusion_type}. Choose from: early, late, hybrid")
@@ -576,6 +577,8 @@ if __name__ == "__main__":
                         help='Output checkpoint path')
     parser.add_argument('--fusion_type', type=str, default='hybrid', choices=['early', 'late', 'hybrid'],
                         help='Fusion type: early, late, hybrid')
+    parser.add_argument('--disable_cross_attention', action='store_true',
+                        help='Disable cross-modal attention in hybrid fusion')
     
     args = parser.parse_args()
     main(args)

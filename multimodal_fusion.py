@@ -348,7 +348,7 @@ class HybridFusionModel(nn.Module):
     
     This is the most sophisticated fusion strategy:
     1. Project EEG and BVP to shared dimension
-    2. Apply cross-modal attention (EEG ↔ BVP)
+    2. (Optional) Apply cross-modal attention (EEG ↔ BVP)
     3. Use gated fusion to combine modalities
     4. Classify fused representation
     
@@ -360,6 +360,7 @@ class HybridFusionModel(nn.Module):
         num_heads (int): Number of attention heads (default: 4)
         dropout (float): Dropout rate (default: 0.1)
         use_bvp (bool): Use BVP modality (default: True). If False, EEG-only mode
+        use_cross_attention (bool): Use cross-modal attention (default: True). If False, skip attention and only use gated fusion
     """
     
     def __init__(
@@ -370,13 +371,15 @@ class HybridFusionModel(nn.Module):
         shared_dim=128,
         num_heads=4,
         dropout=0.1,
-        use_bvp=True
+        use_bvp=True,
+        use_cross_attention=True
     ):
         super().__init__()
         
         self.eeg_encoder = eeg_encoder
         self.bvp_encoder = bvp_encoder
         self.use_bvp = use_bvp
+        self.use_cross_attention = use_cross_attention
         
         eeg_dim = eeg_encoder.output_dim  # 512
         bvp_dim = bvp_encoder.get_output_dim() if use_bvp else 0  # 75
@@ -401,13 +404,14 @@ class HybridFusionModel(nn.Module):
             )
             
             # ============================================================
-            # 2. CROSS-MODAL ATTENTION
+            # 2. CROSS-MODAL ATTENTION (OPTIONAL)
             # ============================================================
-            self.cross_attention = CrossModalAttention(
-                d_model=shared_dim,
-                num_heads=num_heads,
-                dropout=dropout
-            )
+            if use_cross_attention:
+                self.cross_attention = CrossModalAttention(
+                    d_model=shared_dim,
+                    num_heads=num_heads,
+                    dropout=dropout
+                )
             
             # ============================================================
             # 3. GATED FUSION
@@ -454,8 +458,12 @@ class HybridFusionModel(nn.Module):
             # Project BVP to shared dimension
             h_bvp = self.bvp_proj(h_bvp_raw)  # [B, shared_dim]
             
-            # Apply cross-modal attention
-            h_eeg_attended, h_bvp_attended = self.cross_attention(h_eeg, h_bvp)
+            # Apply cross-modal attention (if enabled)
+            if self.use_cross_attention:
+                h_eeg_attended, h_bvp_attended = self.cross_attention(h_eeg, h_bvp)
+            else:
+                # Skip cross-attention, use projected features directly
+                h_eeg_attended, h_bvp_attended = h_eeg, h_bvp
             
             # Gated fusion
             h_fused = self.gated_fusion(h_eeg_attended, h_bvp_attended)  # [B, shared_dim]
@@ -468,7 +476,8 @@ class HybridFusionModel(nn.Module):
                     'bvp_projected': h_bvp,
                     'eeg_attended': h_eeg_attended,
                     'bvp_attended': h_bvp_attended,
-                    'fused': h_fused
+                    'fused': h_fused,
+                    'cross_attention_used': self.use_cross_attention
                 }
         else:
             # EEG-only mode: use projected EEG features directly
