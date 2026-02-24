@@ -332,6 +332,7 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, config):
     print(f"\n📊 Creating visualizations for {len(subjects)} subjects...")
     
     vis_length = config.BVP_FS * config.VIS_DURATION_SEC
+    zoom_length = config.BVP_FS * 5  # 5 seconds zoom window
     
     for idx, subject in enumerate(subjects, 1):
         print(f"\n   Subject {idx}/{len(subjects)}: {subject}")
@@ -342,63 +343,96 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, config):
         print(f"      Baseline: {len(baseline)} samples ({len(baseline)/config.BVP_FS:.1f}s)")
         print(f"      Trials: {len(trials)}")
         
-        # Create figure for this subject
-        fig, axes = plt.subplots(len(trials) + 1, 3, figsize=(18, 4 * (len(trials) + 1)))
+        # Create figure for this subject with 4 columns
+        fig, axes = plt.subplots(len(trials) + 1, 4, figsize=(24, 4 * (len(trials) + 1)))
         
         if len(trials) == 0:
-            axes = axes.reshape(1, 3)
+            axes = axes.reshape(1, 4)
         elif len(trials) == 1:
-            axes = axes.reshape(2, 3)
+            axes = axes.reshape(2, 4)
         
-        time = np.arange(min(vis_length, len(baseline))) / config.BVP_FS
+        time_full = np.arange(min(vis_length, len(baseline))) / config.BVP_FS
+        time_zoom = np.arange(min(zoom_length, len(baseline))) / config.BVP_FS
         
         # Row 0: Baseline
         baseline_vis = baseline[:min(vis_length, len(baseline))]
+        baseline_zoom = baseline[:min(zoom_length, len(baseline))]
         
-        axes[0, 0].plot(time, baseline_vis, 'g-', linewidth=0.8)
+        # Column 0: Full baseline
+        axes[0, 0].plot(time_full, baseline_vis, 'g-', linewidth=0.8)
         axes[0, 0].set_title(f'Subject {subject} - Baseline (Resting)', fontweight='bold')
         axes[0, 0].set_ylabel('Amplitude')
         axes[0, 0].grid(True, alpha=0.3)
         
-        axes[0, 1].text(0.5, 0.5, f'Subject: {subject}\nBaseline Recording\n(Resting State)', 
-                       ha='center', va='center', fontsize=12, transform=axes[0, 1].transAxes)
-        axes[0, 1].axis('off')
+        # Column 1: Zoomed baseline
+        axes[0, 1].plot(time_zoom, baseline_zoom, 'g-', linewidth=1.2)
+        axes[0, 1].set_title(f'Baseline - ZOOMED (First 5s)', fontweight='bold', color='darkgreen')
+        axes[0, 1].set_ylabel('Amplitude')
+        axes[0, 1].grid(True, alpha=0.3)
         
-        axes[0, 2].text(0.5, 0.5, f'Total Trials: {len(trials)}\nEmotions: {", ".join(set([e for e, _, _, _ in trials]))}', 
-                       ha='center', va='center', fontsize=10, transform=axes[0, 2].transAxes)
+        # Column 2: Info
+        axes[0, 2].text(0.5, 0.5, f'Subject: {subject}\nBaseline Recording\n(Resting State)', 
+                       ha='center', va='center', fontsize=12, transform=axes[0, 2].transAxes)
         axes[0, 2].axis('off')
+        
+        # Column 3: Stats
+        axes[0, 3].text(0.5, 0.5, f'Total Trials: {len(trials)}\nEmotions: {", ".join(set([e for e, _, _, _ in trials]))}', 
+                       ha='center', va='center', fontsize=10, transform=axes[0, 3].transAxes)
+        axes[0, 3].axis('off')
         
         # Subsequent rows: Each trial
         for trial_idx, (emotion, signal_no_br, signal_with_br, filename) in enumerate(trials, 1):
-            time_trial = np.arange(min(vis_length, len(signal_no_br))) / config.BVP_FS
+            time_trial_full = np.arange(min(vis_length, len(signal_no_br))) / config.BVP_FS
+            time_trial_zoom = np.arange(min(zoom_length, len(signal_no_br))) / config.BVP_FS
+            
             signal_no_br_vis = signal_no_br[:min(vis_length, len(signal_no_br))]
             signal_with_br_vis = signal_with_br[:min(vis_length, len(signal_with_br))]
             
-            # Column 0: Without baseline reduction
-            axes[trial_idx, 0].plot(time_trial, signal_no_br_vis, 'orange', linewidth=0.8)
+            signal_no_br_zoom = signal_no_br[:min(zoom_length, len(signal_no_br))]
+            signal_with_br_zoom = signal_with_br[:min(zoom_length, len(signal_with_br))]
+            
+            # Column 0: Without baseline reduction (full)
+            axes[trial_idx, 0].plot(time_trial_full, signal_no_br_vis, 'orange', linewidth=0.8)
             axes[trial_idx, 0].set_title(f'{emotion} - WITHOUT Baseline Reduction', fontweight='bold')
             axes[trial_idx, 0].set_ylabel('Normalized')
             axes[trial_idx, 0].grid(True, alpha=0.3)
             
-            # Column 1: With baseline reduction
-            axes[trial_idx, 1].plot(time_trial, signal_with_br_vis, 'purple', linewidth=0.8)
+            # Column 1: With baseline reduction (full)
+            axes[trial_idx, 1].plot(time_trial_full, signal_with_br_vis, 'purple', linewidth=0.8)
             axes[trial_idx, 1].set_title(f'{emotion} - WITH Baseline Reduction', fontweight='bold')
             axes[trial_idx, 1].set_ylabel('Normalized')
             axes[trial_idx, 1].grid(True, alpha=0.3)
             
-            # Column 2: Comparison
-            axes[trial_idx, 2].plot(time_trial, signal_no_br_vis, 'orange', linewidth=0.8, 
+            # Column 2: Comparison (full)
+            axes[trial_idx, 2].plot(time_trial_full, signal_no_br_vis, 'orange', linewidth=0.8, 
                                    label='No BR', alpha=0.7)
-            axes[trial_idx, 2].plot(time_trial, signal_with_br_vis, 'purple', linewidth=0.8, 
+            axes[trial_idx, 2].plot(time_trial_full, signal_with_br_vis, 'purple', linewidth=0.8, 
                                    label='With BR', alpha=0.7)
             axes[trial_idx, 2].set_title(f'{emotion} - Comparison', fontweight='bold')
             axes[trial_idx, 2].set_ylabel('Normalized')
-            axes[trial_idx, 2].legend(loc='upper right')
+            axes[trial_idx, 2].legend(loc='upper right', fontsize=8)
             axes[trial_idx, 2].grid(True, alpha=0.3)
+            
+            # Column 3: ZOOMED Comparison (first 5 seconds)
+            axes[trial_idx, 3].plot(time_trial_zoom, signal_no_br_zoom, 'orange', linewidth=1.5, 
+                                   label='No BR', alpha=0.8, marker='o', markersize=2, markevery=10)
+            axes[trial_idx, 3].plot(time_trial_zoom, signal_with_br_zoom, 'purple', linewidth=1.5, 
+                                   label='With BR', alpha=0.8, marker='s', markersize=2, markevery=10)
+            axes[trial_idx, 3].set_title(f'{emotion} - ZOOMED Comparison (First 5s)', 
+                                        fontweight='bold', color='darkred')
+            axes[trial_idx, 3].set_ylabel('Normalized')
+            axes[trial_idx, 3].legend(loc='upper right', fontsize=8)
+            axes[trial_idx, 3].grid(True, alpha=0.3)
+            
+            # Add shaded region to show zoom area in full comparison
+            axes[trial_idx, 2].axvspan(0, 5, alpha=0.1, color='red', label='Zoom Region')
         
         # Set x-label for bottom row
-        for col in range(3):
-            axes[-1, col].set_xlabel('Time (seconds)')
+        for col in range(4):
+            if col == 1 or col == 3:
+                axes[-1, col].set_xlabel('Time (seconds) - ZOOMED')
+            else:
+                axes[-1, col].set_xlabel('Time (seconds)')
         
         plt.tight_layout()
         
