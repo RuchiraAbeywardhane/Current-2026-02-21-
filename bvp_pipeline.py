@@ -556,7 +556,7 @@ if __name__ == "__main__":
     
     # Paths
     parser.add_argument('--data_root', type=str, 
-                       default='E:/FInal Year Project/MyCodeSpace/Current(2026-02-21)/Data',
+                       default='/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined',
                        help='Path to data directory')
     parser.add_argument('--checkpoint', type=str, default='best_bvp_hybrid.pt',
                        help='Path to save/load model checkpoint')
