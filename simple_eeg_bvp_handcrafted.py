@@ -206,7 +206,8 @@ def main(args):
     bvp_config.USE_BVP_BASELINE_REDUCTION = False
     bvp_config.USE_BVP_BASELINE_CORRECTION = False
     
-    bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(args.bvp_data_root, bvp_config)
+    # Use BVP config's DATA_ROOT
+    bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(bvp_config.DATA_ROOT, bvp_config)
     
     print(f"✅ BVP data: {bvp_X_raw.shape}")
     

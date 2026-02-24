@@ -327,7 +327,7 @@ def main(args):
     bvp_config = BVPConfig()
     bvp_config.USE_BVP_BASELINE_REDUCTION = False
     bvp_config.USE_BVP_BASELINE_CORRECTION = False
-    bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(args.bvp_data_root, bvp_config)
+    bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(bvp_config.DATA_ROOT, bvp_config)
     
     # Align datasets
     common_subjects = list(set(eeg_subjects) & set(bvp_subjects))
