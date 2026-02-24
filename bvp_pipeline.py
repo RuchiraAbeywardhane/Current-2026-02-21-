@@ -37,6 +37,7 @@ from torch.utils.data import Dataset, DataLoader
 from bvp_config import BVPConfig
 from bvp_data_loader import load_bvp_data, create_data_splits
 from bvp_encoder import BVPEncoder, BVPEncoderWithAttention
+from bvp_hybrid_encoder import BVPHybridEncoder
 from classification_head import get_classification_head
 
 
@@ -76,7 +77,7 @@ class BVPModel(nn.Module):
                  num_classes=4, encoder_params=None, head_params=None):
         """
         Args:
-            encoder_type (str): 'basic' or 'attention'
+            encoder_type (str): 'basic', 'attention', or 'hybrid'
             head_type (str): 'simple', 'deep', 'residual', 'attention'
             num_classes (int): Number of output classes
             encoder_params (dict): Parameters for encoder
@@ -95,13 +96,21 @@ class BVPModel(nn.Module):
                 'dropout': 0.3
             }
         
-        # Create encoder
+        # Create encoder based on type
         if encoder_type == 'basic':
             self.encoder = BVPEncoder(**encoder_params)
         elif encoder_type == 'attention':
             self.encoder = BVPEncoderWithAttention(**encoder_params)
+        elif encoder_type == 'hybrid':
+            # Hybrid encoder combines deep learning + handcrafted features
+            # Add sampling_rate and min_peak_distance if not provided
+            if 'sampling_rate' not in encoder_params:
+                encoder_params['sampling_rate'] = 64.0
+            if 'min_peak_distance' not in encoder_params:
+                encoder_params['min_peak_distance'] = 20
+            self.encoder = BVPHybridEncoder(**encoder_params)
         else:
-            raise ValueError(f"Unknown encoder_type: {encoder_type}")
+            raise ValueError(f"Unknown encoder_type: {encoder_type}. Choose from: basic, attention, hybrid")
         
         # Get encoder output dimension
         encoder_output_dim = self.encoder.get_output_dim()
@@ -386,7 +395,7 @@ def plot_training_history(history, save_path='bvp_training_history.png'):
     axes[1].plot(history['val_acc'], label='Val Acc', linewidth=2)
     axes[1].set_xlabel('Epoch')
     axes[1].set_ylabel('Accuracy (%)')
-    axes[1].set_title('Training and Validation Accuracy')
+    axes[1].setTitle('Training and Validation Accuracy')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
     
@@ -549,7 +558,7 @@ if __name__ == "__main__":
     
     # Model architecture
     parser.add_argument('--encoder', type=str, default='basic', 
-                       choices=['basic', 'attention'],
+                       choices=['basic', 'attention', 'hybrid'],
                        help='BVP encoder type (default: basic)')
     parser.add_argument('--head', type=str, default='simple',
                        choices=['simple', 'deep', 'residual', 'attention'],
