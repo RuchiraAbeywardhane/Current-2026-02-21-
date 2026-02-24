@@ -267,18 +267,28 @@ def main(args):
     )
     
     if not args.disable_bvp:
-        # Create multimodal datasets
+        # Create multimodal datasets - FIX: Use correct BVP indices
         bvp_tr = bvp_X_raw[train_idx]
         bvp_va = bvp_X_raw[val_idx]
         bvp_te = bvp_X_raw[test_idx]
+        
+        # FIX: Use BVP labels and subjects for proper alignment
+        bvp_ytr = bvp_y[train_idx]
+        bvp_yva = bvp_y[val_idx]
+        bvp_yte = bvp_y[test_idx]
+        
+        bvp_subj_tr = bvp_subjects[train_idx]
+        bvp_subj_va = bvp_subjects[val_idx]
+        bvp_subj_te = bvp_subjects[test_idx]
         
         subj_tr = eeg_subjects[train_idx]
         subj_va = eeg_subjects[val_idx]
         subj_te = eeg_subjects[test_idx]
         
-        tr_ds = EEGBVPDataset(Xtr, ytr, subj_tr, bvp_tr, ytr, subj_tr)
-        va_ds = EEGBVPDataset(Xva, yva, subj_va, bvp_va, yva, subj_va)
-        te_ds = EEGBVPDataset(Xte, yte, subj_te, bvp_te, yte, subj_te)
+        # Create properly aligned datasets
+        tr_ds = EEGBVPDataset(Xtr, ytr, subj_tr, bvp_tr, bvp_ytr, bvp_subj_tr)
+        va_ds = EEGBVPDataset(Xva, yva, subj_va, bvp_va, bvp_yva, bvp_subj_va)
+        te_ds = EEGBVPDataset(Xte, yte, subj_te, bvp_te, bvp_yte, bvp_subj_te)
         
         print(f"   Multimodal datasets: Train={len(tr_ds)}, Val={len(va_ds)}, Test={len(te_ds)}")
     else:
