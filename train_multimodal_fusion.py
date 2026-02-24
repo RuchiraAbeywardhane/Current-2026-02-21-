@@ -410,7 +410,7 @@ def main(args):
     
     eeg_encoder = EEGEncoder(eeg_model, freeze_weights=args.freeze_encoders)
     
-    # Create BVP encoder
+    # Create BVP encoder (even if disabled, needed for model structure)
     bvp_encoder = BVPHybridEncoder(
         input_size=1,
         hidden_size=32,
@@ -423,13 +423,33 @@ def main(args):
             param.requires_grad = False
         bvp_encoder.eval()
     
+    # Check if BVP is disabled
+    if args.disable_bvp:
+        print("\n⚠️  BVP MODALITY DISABLED - Running in EEG-ONLY mode")
+        print("   This will show baseline EEG performance without BVP fusion")
+    
     # Create fusion model
     if args.fusion_type == 'early':
-        model = EarlyFusionModel(eeg_encoder, bvp_encoder, n_classes=4)
+        if args.disable_bvp:
+            print("⚠️  Early fusion requires BVP. Switching to hybrid fusion with use_bvp=False")
+            model = HybridFusionModel(eeg_encoder, bvp_encoder, n_classes=4, shared_dim=128, num_heads=4, use_bvp=False)
+        else:
+            model = EarlyFusionModel(eeg_encoder, bvp_encoder, n_classes=4)
     elif args.fusion_type == 'late':
-        model = LateFusionModel(eeg_encoder, bvp_encoder, n_classes=4)
+        if args.disable_bvp:
+            print("⚠️  Late fusion requires BVP. Switching to hybrid fusion with use_bvp=False")
+            model = HybridFusionModel(eeg_encoder, bvp_encoder, n_classes=4, shared_dim=128, num_heads=4, use_bvp=False)
+        else:
+            model = LateFusionModel(eeg_encoder, bvp_encoder, n_classes=4)
     elif args.fusion_type == 'hybrid':
-        model = HybridFusionModel(eeg_encoder, bvp_encoder, n_classes=4, shared_dim=128, num_heads=4)
+        model = HybridFusionModel(
+            eeg_encoder, 
+            bvp_encoder, 
+            n_classes=4, 
+            shared_dim=128, 
+            num_heads=4,
+            use_bvp=not args.disable_bvp  # Disable BVP if flag is set
+        )
     else:
         raise ValueError(f"Unknown fusion type: {args.fusion_type}")
     
@@ -437,7 +457,8 @@ def main(args):
     
     # Print model info
     params = get_trainable_parameters(model)
-    print(f"\n🧠 {args.fusion_type.capitalize()} Fusion Model:")
+    mode_str = "EEG-ONLY" if args.disable_bvp else f"{args.fusion_type.capitalize()} Fusion"
+    print(f"\n🧠 {mode_str} Model:")
     print(f"   Total parameters:     {params['total']:,}")
     print(f"   Trainable parameters: {params['trainable']:,}")
     print(f"   Frozen parameters:    {params['frozen']:,}")
@@ -535,6 +556,8 @@ if __name__ == "__main__":
                         help='Use multi-scale BVP encoder')
     parser.add_argument('--use_baseline_reduction', action='store_true',
                         help='Apply baseline reduction to both modalities')
+    parser.add_argument('--disable_bvp', action='store_true',
+                        help='Disable BVP modality for EEG-only mode')
     
     # Training parameters
     parser.add_argument('--batch_size', type=int, default=32,

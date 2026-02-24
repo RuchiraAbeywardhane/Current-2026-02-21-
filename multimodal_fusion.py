@@ -359,6 +359,7 @@ class HybridFusionModel(nn.Module):
         shared_dim (int): Shared representation dimension (default: 128)
         num_heads (int): Number of attention heads (default: 4)
         dropout (float): Dropout rate (default: 0.1)
+        use_bvp (bool): Use BVP modality (default: True). If False, EEG-only mode
     """
     
     def __init__(
@@ -368,15 +369,17 @@ class HybridFusionModel(nn.Module):
         n_classes=4,
         shared_dim=128,
         num_heads=4,
-        dropout=0.1
+        dropout=0.1,
+        use_bvp=True
     ):
         super().__init__()
         
         self.eeg_encoder = eeg_encoder
         self.bvp_encoder = bvp_encoder
+        self.use_bvp = use_bvp
         
         eeg_dim = eeg_encoder.output_dim  # 512
-        bvp_dim = bvp_encoder.get_output_dim()  # 75
+        bvp_dim = bvp_encoder.get_output_dim() if use_bvp else 0  # 75
         
         # ============================================================
         # 1. PROJECTION TO SHARED SPACE
@@ -389,26 +392,27 @@ class HybridFusionModel(nn.Module):
             nn.Dropout(dropout)
         )
         
-        self.bvp_proj = nn.Sequential(
-            nn.Linear(bvp_dim, shared_dim),
-            nn.LayerNorm(shared_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
-        
-        # ============================================================
-        # 2. CROSS-MODAL ATTENTION
-        # ============================================================
-        self.cross_attention = CrossModalAttention(
-            d_model=shared_dim,
-            num_heads=num_heads,
-            dropout=dropout
-        )
-        
-        # ============================================================
-        # 3. GATED FUSION
-        # ============================================================
-        self.gated_fusion = GatedFusion(d_model=shared_dim)
+        if use_bvp:
+            self.bvp_proj = nn.Sequential(
+                nn.Linear(bvp_dim, shared_dim),
+                nn.LayerNorm(shared_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+            
+            # ============================================================
+            # 2. CROSS-MODAL ATTENTION
+            # ============================================================
+            self.cross_attention = CrossModalAttention(
+                d_model=shared_dim,
+                num_heads=num_heads,
+                dropout=dropout
+            )
+            
+            # ============================================================
+            # 3. GATED FUSION
+            # ============================================================
+            self.gated_fusion = GatedFusion(d_model=shared_dim)
         
         # ============================================================
         # 4. FINAL CLASSIFIER
@@ -424,46 +428,63 @@ class HybridFusionModel(nn.Module):
             nn.Linear(shared_dim // 2, n_classes)
         )
     
-    def forward(self, eeg_x, bvp_x, return_attention_weights=False):
+    def forward(self, eeg_x, bvp_x=None, return_attention_weights=False):
         """
         Forward pass through hybrid fusion model.
         
         Args:
             eeg_x (torch.Tensor): EEG input [batch_size, n_channels, n_features]
-            bvp_x (torch.Tensor): BVP input [batch_size, time_steps, 1]
+            bvp_x (torch.Tensor): BVP input [batch_size, time_steps, 1] (optional if use_bvp=False)
             return_attention_weights (bool): Return attention analysis (default: False)
         
         Returns:
             logits (torch.Tensor): Class logits [batch_size, n_classes]
             (optional) attention_info: Dict with intermediate representations
         """
-        # Extract features from both modalities
+        # Extract features from EEG
         h_eeg_raw = self.eeg_encoder(eeg_x)  # [B, 512]
-        h_bvp_raw = self.bvp_encoder(bvp_x)  # [B, 75]
         
-        # Project to shared dimension
+        # Project EEG to shared dimension
         h_eeg = self.eeg_proj(h_eeg_raw)  # [B, shared_dim]
-        h_bvp = self.bvp_proj(h_bvp_raw)  # [B, shared_dim]
         
-        # Apply cross-modal attention
-        h_eeg_attended, h_bvp_attended = self.cross_attention(h_eeg, h_bvp)
-        
-        # Gated fusion
-        h_fused = self.gated_fusion(h_eeg_attended, h_bvp_attended)  # [B, shared_dim]
+        if self.use_bvp and bvp_x is not None:
+            # Extract features from BVP
+            h_bvp_raw = self.bvp_encoder(bvp_x)  # [B, 75]
+            
+            # Project BVP to shared dimension
+            h_bvp = self.bvp_proj(h_bvp_raw)  # [B, shared_dim]
+            
+            # Apply cross-modal attention
+            h_eeg_attended, h_bvp_attended = self.cross_attention(h_eeg, h_bvp)
+            
+            # Gated fusion
+            h_fused = self.gated_fusion(h_eeg_attended, h_bvp_attended)  # [B, shared_dim]
+            
+            if return_attention_weights:
+                attention_info = {
+                    'eeg_raw': h_eeg_raw,
+                    'bvp_raw': h_bvp_raw,
+                    'eeg_projected': h_eeg,
+                    'bvp_projected': h_bvp,
+                    'eeg_attended': h_eeg_attended,
+                    'bvp_attended': h_bvp_attended,
+                    'fused': h_fused
+                }
+        else:
+            # EEG-only mode: use projected EEG features directly
+            h_fused = h_eeg  # [B, shared_dim]
+            
+            if return_attention_weights:
+                attention_info = {
+                    'eeg_raw': h_eeg_raw,
+                    'eeg_projected': h_eeg,
+                    'fused': h_fused
+                }
         
         # Classification
         logits = self.classifier(h_fused)  # [B, n_classes]
         
         if return_attention_weights:
-            attention_info = {
-                'eeg_raw': h_eeg_raw,
-                'bvp_raw': h_bvp_raw,
-                'eeg_projected': h_eeg,
-                'bvp_projected': h_bvp,
-                'eeg_attended': h_eeg_attended,
-                'bvp_attended': h_bvp_attended,
-                'fused': h_fused
-            }
             return logits, attention_info
         
         return logits
