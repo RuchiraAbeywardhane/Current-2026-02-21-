@@ -31,7 +31,7 @@ class BVPConfig:
     # BASELINE PREPROCESSING
     # ==========================================
     # Baseline Correction: Removes drift within the signal using local minima
-    USE_BVP_BASELINE_CORRECTION = True
+    USE_BVP_BASELINE_CORRECTION = False
     
     # Baseline Reduction: Uses baseline recordings (InvBase method) to normalize
     # and reduce inter-subject variability (similar to EEG baseline reduction)
