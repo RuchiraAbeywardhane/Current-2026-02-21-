@@ -480,8 +480,7 @@ def main(args):
         optimizer,
         mode='min',
         factor=0.5,
-        patience=5,
-        verbose=True
+        patience=5
     )
     
     print(f"\n🎯 Training Configuration:")
@@ -490,6 +489,7 @@ def main(args):
     print(f"   Learning rate: {args.learning_rate}")
     print(f"   Weight decay:  {args.weight_decay}")
     print(f"   Early stop:    {args.patience} epochs")
+    print(f"   LR scheduler:  ReduceLROnPlateau (factor=0.5, patience=5)")
     
     # ============================================================
     # STEP 6: TRAINING LOOP
