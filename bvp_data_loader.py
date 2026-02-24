@@ -368,9 +368,9 @@ def preprocess_bvp_signal(bvp_raw, fs, highcut_hz=15.0, lowcut_hz=0.5, filter_or
 
 def load_bvp_data(data_root, config):
     """
-    Load BVP data from Samsung Watch/Empatica JSON files.
+    Load BVP data from Samsung Watch JSON files.
     
-    This function searches for BVP data files (SAMSUNG_WATCH or EMPATICA),
+    This function searches for BVP data files from Samsung Watch,
     applies preprocessing, and creates windowed samples for training.
     
     Args:
@@ -379,7 +379,6 @@ def load_bvp_data(data_root, config):
                 Must have: BVP_FS, BVP_WINDOW_SEC, BVP_OVERLAP, SUPERCLASS_MAP
                 Optional: USE_BVP_BASELINE_CORRECTION (default: True)
                 Optional: USE_BVP_BASELINE_REDUCTION (default: False)
-                Optional: BVP_DEVICE (default: 'both') - 'samsung_watch', 'empatica', or 'both'
     
     Returns:
         X_raw: (N, T) - Raw BVP windows (preprocessed)
@@ -388,54 +387,29 @@ def load_bvp_data(data_root, config):
         label_to_id: Dictionary mapping label names to integers
     """
     print("\n" + "="*80)
-    print("LOADING BVP DATA (SAMSUNG WATCH / EMPATICA)")
+    print("LOADING BVP DATA (SAMSUNG WATCH)")
     print("="*80)
     
-    # Get device selection from config
-    bvp_device = getattr(config, 'BVP_DEVICE', 'both').lower()
-    print(f"🔧 BVP Device Selection: {bvp_device.upper()}")
-    
-    # Search for BVP files based on device selection
-    all_patterns = []
-    
-    if bvp_device in ['samsung_watch', 'both']:
-        all_patterns.extend([
-            os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
-        ])
-    
-    if bvp_device in ['empatica', 'both']:
-        all_patterns.extend([
-            os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
-            os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
-        ])
-    
-    if not all_patterns:
-        raise ValueError(f"Invalid BVP_DEVICE: '{bvp_device}'. Choose 'samsung_watch', 'empatica', or 'both'")
+    # Search for Samsung Watch BVP files only
+    all_patterns = [
+        os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+    ]
     
     files = sorted({p for pat in all_patterns for p in glob.glob(pat)})
     
-    # Count files by device type
-    samsung_files = [f for f in files if 'SAMSUNG_WATCH' in f]
-    empatica_files = [f for f in files if 'EMPATICA' in f]
-    
-    print(f"Found {len(files)} BVP files total:")
-    if samsung_files:
-        print(f"   📱 Samsung Watch: {len(samsung_files)} files")
-    if empatica_files:
-        print(f"   ⌚ Empatica: {len(empatica_files)} files")
+    print(f"Found {len(files)} Samsung Watch BVP files")
     
     if len(files) == 0:
-        print("\n❌ ERROR: No BVP files found!")
+        print("\n❌ ERROR: No Samsung Watch BVP files found!")
         print(f"   Searched in: {data_root}")
         if os.path.exists(data_root):
             print(f"   Directory contents: {os.listdir(data_root)[:10]}")
-        raise ValueError("No BVP files found. Check DATA_ROOT path.")
+        raise ValueError("No Samsung Watch BVP files found. Check DATA_ROOT path.")
     
     print(f"\n📁 Sample files:")
     for f in files[:3]:
-        device_type = "📱 Samsung" if 'SAMSUNG_WATCH' in f else "⌚ Empatica"
-        print(f"   {device_type}: {os.path.basename(f)}")
+        print(f"   📱 {os.path.basename(f)}")
     
     # Check preprocessing flags
     use_baseline_correction = getattr(config, 'USE_BVP_BASELINE_CORRECTION', False)
@@ -456,24 +430,13 @@ def load_bvp_data(data_root, config):
     if use_baseline_reduction:
         print(f"\n📂 Loading baseline recordings...")
         
-        # Search for baseline files based on device selection
-        # Updated patterns to match actual baseline file naming convention
-        baseline_patterns = []
-        if bvp_device in ['samsung_watch', 'both']:
-            baseline_patterns.extend([
-                os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-                os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-                os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),  # ✅ Added
-                os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")  # ✅ Added
-            ])
-        
-        if bvp_device in ['empatica', 'both']:
-            baseline_patterns.extend([
-                os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
-                os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json"),
-                os.path.join(data_root, "*_BASELINE_STIMULUS_EMPATICA.json"),  # ✅ Added
-                os.path.join(data_root, "*", "*_BASELINE_STIMULUS_EMPATICA.json")  # ✅ Added
-            ])
+        # Search for Samsung Watch baseline files
+        baseline_patterns = [
+            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
+            os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
+        ]
         
         baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
         print(f"   Found {len(baseline_files)} baseline files")
@@ -496,7 +459,6 @@ def load_bvp_data(data_root, config):
                     bdata = json.load(f)
                 
                 # Try different field names for baseline data
-                # Samsung Watch uses "BVPRaw", Empatica uses "BVP"
                 bvp_baseline = None
                 for field in ["BVPRaw", "BVP", "BVPProcessed"]:
                     if field in bdata and bdata[field]:
@@ -616,7 +578,7 @@ def load_bvp_data(data_root, config):
             bvp_data = None
             field_used = None
             
-            # Try different field names in order of preference
+            # Try different field names in order of preference (Samsung Watch specific)
             possible_fields = ["BVP", "BVPRaw", "BVPProcessed", "PPG", "HR", "SAMSUNG_BVP"]
             
             for field_name in possible_fields:

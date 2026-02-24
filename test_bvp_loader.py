@@ -3,17 +3,16 @@ BVP Data Loader Test Script
 ============================
 
 This script tests the BVP data loader module to verify:
-- Data loading from JSON files
-- Signal preprocessing (filtering, denoising, baseline correction)
-- Feature extraction
-- Data splitting
-- Visualization of preprocessing steps
+- Load ALL BVP data from dataset
+- Load baseline recordings per subject
+- Apply baseline reduction for ALL subjects
+- Save sample visualizations from different subjects
 
 Usage:
     python test_bvp_loader.py
 
 Author: Final Year Project
-Date: 2026
+Date: 2026-02-24
 """
 
 import os
@@ -22,18 +21,12 @@ import json
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import defaultdict
 
 # Import BVP data loader
 from bvp_data_loader import (
-    load_bvp_data,
-    extract_bvp_features,
-    extract_all_bvp_features,
-    create_data_splits,
     preprocess_bvp_signal,
     apply_baseline_reduction,
-    butter_lowpass,
-    wavelet_denoise,
-    baseline_correct,
     _to_num,
     _interp_nan
 )
@@ -46,30 +39,20 @@ from bvp_data_loader import (
 class TestConfig:
     """Configuration for testing BVP data loader."""
     # Data path - CHANGE THIS TO YOUR DATA PATH
-    DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emognitioncleaned-combined"
+    DATA_ROOT = "E:/FInal Year Project/MyCodeSpace/Current(2026-02-21)/Data"
     
     # BVP parameters
     BVP_FS = 64  # Samsung Watch sampling frequency
-    BVP_WINDOW_SEC = 10  # 10-second windows
-    BVP_OVERLAP = 0.0  # No overlap
-    BVP_DEVICE = 'samsung_watch'  # Only use Samsung Watch, not Empatica
+    BVP_DEVICE = 'samsung_watch'  # Only use Samsung Watch
     
-    # BVP Preprocessing
-    USE_BVP_BASELINE_CORRECTION = False  # Baseline drift correction
-    USE_BVP_BASELINE_REDUCTION = True   # Baseline reduction (InvBase method)
+    # Visualization
+    NUM_SUBJECTS_TO_VISUALIZE = 5  # Number of subjects to save visualizations for
+    VIS_DURATION_SEC = 30  # Show first 30 seconds in plots
     
-    # Classification
-    NUM_CLASSES = 4
-    SUBJECT_INDEPENDENT = True
+    # Output
+    OUTPUT_DIR = "bvp_baseline_reduction_results"
+    
     SEED = 42
-    
-    # Label mappings
-    SUPERCLASS_MAP = {
-        "ENTHUSIASM": "Q1",
-        "FEAR": "Q2",
-        "SADNESS": "Q3",
-        "NEUTRAL": "Q4",
-    }
 
 
 # Set random seed
@@ -79,280 +62,376 @@ np.random.seed(config.SEED)
 
 
 # ==================================================
-# TEST FUNCTIONS
+# LOAD ALL BVP DATA WITH BASELINE REDUCTION
 # ==================================================
 
-def test_baseline_reduction_method(data_root, bvp_device='samsung_watch'):
+def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     """
-    Test baseline reduction (InvBase method) with actual baseline and stimulus files.
-    This demonstrates how ONE baseline per subject is used to normalize all trials from that subject.
+    Load ALL BVP data from dataset and apply baseline reduction per subject.
+    
+    Returns:
+        baseline_dict: {subject_id: baseline_signal}
+        stimulus_dict: {subject_id: [(emotion, signal_no_br, signal_with_br, filename), ...]}
+        stats: Dictionary with statistics
     """
     print("\n" + "="*80)
-    print("TEST: BASELINE REDUCTION (InvBase Method)")
-    print("="*80)
-    print("\nThis test demonstrates how baseline files work:")
-    print("  - ONE baseline file per subject (resting state recording)")
-    print("  - Baseline is used to normalize ALL emotional trials from that subject")
-    print("  - InvBase method: Divide trial FFT by baseline FFT")
+    print("LOADING ALL BVP DATA WITH BASELINE REDUCTION")
     print("="*80)
     
-    # Find baseline files
-    baseline_patterns = []
-    if bvp_device in ['samsung_watch', 'both']:
-        baseline_patterns.extend([
-            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
-        ])
+    # ============================================================
+    # STEP 1: Load all baseline files
+    # ============================================================
+    print("\n📂 Step 1: Loading baseline files...")
+    
+    baseline_patterns = [
+        os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
+        os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
+        os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
+        os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
+    ]
     
     baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
+    print(f"   Found {len(baseline_files)} baseline files")
     
-    if not baseline_files:
-        print("❌ No baseline files found!")
-        return
+    baseline_dict = {}
+    baseline_load_errors = 0
     
-    # Find stimulus files
-    stimulus_patterns = []
-    if bvp_device in ['samsung_watch', 'both']:
-        stimulus_patterns.extend([
-            os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
-        ])
+    for bpath in baseline_files:
+        bname = os.path.basename(bpath)
+        parts = bname.split("_")
+        if len(parts) < 2:
+            continue
+        subject = parts[0]
+        
+        try:
+            with open(bpath, "r") as f:
+                bdata = json.load(f)
+            
+            # Try different field names
+            bvp_baseline = None
+            for field in ["BVPRaw", "BVP", "BVPProcessed"]:
+                if field in bdata and bdata[field]:
+                    bvp_baseline = bdata[field]
+                    break
+            
+            if not bvp_baseline:
+                continue
+            
+            # Handle different formats
+            if isinstance(bvp_baseline[0], list):
+                baseline_raw = np.array([row[1] for row in bvp_baseline], dtype=float)
+            else:
+                baseline_raw = _to_num(bvp_baseline)
+            
+            baseline_raw = _interp_nan(baseline_raw)
+            
+            # Preprocess baseline
+            baseline_processed = preprocess_bvp_signal(
+                baseline_raw,
+                fs=fs,
+                use_baseline_correction=False,
+                normalize=False
+            )
+            
+            baseline_dict[subject] = baseline_processed
+            print(f"   ✅ {subject}: {len(baseline_processed)} samples ({len(baseline_processed)/fs:.1f}s)")
+            
+        except Exception as e:
+            baseline_load_errors += 1
+            continue
+    
+    print(f"\n   Total baselines loaded: {len(baseline_dict)}")
+    print(f"   Subjects with baselines: {sorted(baseline_dict.keys())}")
+    if baseline_load_errors > 0:
+        print(f"   Failed to load: {baseline_load_errors} files")
+    
+    # ============================================================
+    # STEP 2: Load all stimulus files
+    # ============================================================
+    print("\n📂 Step 2: Loading stimulus files...")
+    
+    stimulus_patterns = [
+        os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+    ]
     
     stimulus_files = sorted({p for pat in stimulus_patterns for p in glob.glob(pat)})
-    stimulus_files = [f for f in stimulus_files if "BASELINE" not in f]  # Exclude baseline files
+    stimulus_files = [f for f in stimulus_files if "BASELINE" not in f]
     
-    if not stimulus_files:
-        print("❌ No stimulus files found!")
-        return
+    print(f"   Found {len(stimulus_files)} stimulus files")
     
-    # Load ONE baseline file as example
-    baseline_file = baseline_files[0]
-    baseline_name = os.path.basename(baseline_file)
-    baseline_subject = baseline_name.split("_")[0]
+    # ============================================================
+    # STEP 3: Process each stimulus with baseline reduction
+    # ============================================================
+    print("\n🔧 Step 3: Processing stimulus files with baseline reduction...")
     
-    print(f"\n📂 Loading baseline file:")
-    print(f"   File: {baseline_name}")
-    print(f"   Subject: {baseline_subject}")
+    stimulus_dict = defaultdict(list)
     
-    try:
-        with open(baseline_file, 'r') as f:
-            baseline_data = json.load(f)
-        
-        bvp_baseline_raw = baseline_data.get("BVPRaw", [])
-        
-        if not bvp_baseline_raw:
-            print("❌ No BVP data in baseline file!")
-            return
-        
-        # Handle different formats
-        if isinstance(bvp_baseline_raw[0], list):
-            baseline_raw = np.array([row[1] for row in bvp_baseline_raw], dtype=float)
-        else:
-            baseline_raw = _to_num(bvp_baseline_raw)
-        
-        baseline_raw = _interp_nan(baseline_raw)
-        
-        print(f"   ✅ Baseline loaded: {len(baseline_raw)} samples ({len(baseline_raw)/config.BVP_FS:.1f}s)")
-        
-    except Exception as e:
-        print(f"❌ Error loading baseline: {e}")
-        return
+    processed_count = 0
+    skipped_no_baseline = 0
+    skipped_errors = 0
     
-    # Find stimulus files from the SAME subject
-    subject_stimulus_files = [f for f in stimulus_files if os.path.basename(f).startswith(baseline_subject + "_")]
-    
-    if not subject_stimulus_files:
-        print(f"❌ No stimulus files found for subject {baseline_subject}!")
-        # Try first available subject
-        for stim_file in stimulus_files[:10]:
-            stim_name = os.path.basename(stim_file)
-            stim_subject = stim_name.split("_")[0]
-            stim_emotion = stim_name.split("_")[1] if len(stim_name.split("_")) > 1 else "UNKNOWN"
+    for spath in stimulus_files:
+        sname = os.path.basename(spath)
+        parts = sname.split("_")
+        
+        if len(parts) < 2:
+            skipped_errors += 1
+            continue
+        
+        subject = parts[0]
+        emotion = parts[1].upper()
+        
+        # Check if baseline exists for this subject
+        if subject not in baseline_dict:
+            skipped_no_baseline += 1
+            continue
+        
+        try:
+            # Load stimulus file
+            with open(spath, "r") as f:
+                sdata = json.load(f)
             
-            # Find matching baseline
-            matching_baseline = [bf for bf in baseline_files if os.path.basename(bf).startswith(stim_subject + "_")]
-            if matching_baseline:
-                baseline_file = matching_baseline[0]
-                baseline_subject = stim_subject
-                subject_stimulus_files = [stim_file]
-                
-                print(f"\n   Trying alternative subject: {stim_subject}")
-                print(f"   Baseline: {os.path.basename(baseline_file)}")
-                print(f"   Stimulus: {os.path.basename(stim_file)} ({stim_emotion})")
-                
-                # Reload baseline
-                with open(baseline_file, 'r') as f:
-                    baseline_data = json.load(f)
-                bvp_baseline_raw = baseline_data.get("BVPRaw", [])
-                if isinstance(bvp_baseline_raw[0], list):
-                    baseline_raw = np.array([row[1] for row in bvp_baseline_raw], dtype=float)
-                else:
-                    baseline_raw = _to_num(bvp_baseline_raw)
-                baseline_raw = _interp_nan(baseline_raw)
-                
-                break
+            # Try different field names
+            bvp_stimulus = None
+            for field in ["BVPRaw", "BVP", "BVPProcessed"]:
+                if field in sdata and sdata[field]:
+                    bvp_stimulus = sdata[field]
+                    break
+            
+            if not bvp_stimulus:
+                skipped_errors += 1
+                continue
+            
+            # Handle different formats
+            if isinstance(bvp_stimulus[0], list):
+                stimulus_raw = np.array([row[1] for row in bvp_stimulus], dtype=float)
+            else:
+                stimulus_raw = _to_num(bvp_stimulus)
+            
+            stimulus_raw = _interp_nan(stimulus_raw)
+            
+            # Preprocess WITHOUT baseline reduction
+            stimulus_no_br = preprocess_bvp_signal(
+                stimulus_raw,
+                fs=fs,
+                use_baseline_correction=False,
+                normalize=True
+            )
+            
+            # Preprocess WITH baseline reduction
+            stimulus_processed = preprocess_bvp_signal(
+                stimulus_raw,
+                fs=fs,
+                use_baseline_correction=False,
+                normalize=False
+            )
+            
+            # Get baseline for this subject
+            subject_baseline = baseline_dict[subject].copy()
+            
+            # Match baseline length to stimulus
+            if len(subject_baseline) < len(stimulus_processed):
+                n_repeats = int(np.ceil(len(stimulus_processed) / len(subject_baseline)))
+                subject_baseline = np.tile(subject_baseline, n_repeats)[:len(stimulus_processed)]
+            elif len(subject_baseline) > len(stimulus_processed):
+                subject_baseline = subject_baseline[:len(stimulus_processed)]
+            
+            # Apply baseline reduction
+            stimulus_with_br = apply_baseline_reduction(stimulus_processed, subject_baseline)
+            
+            # Normalize after reduction
+            vmin, vmax = np.min(stimulus_with_br), np.max(stimulus_with_br)
+            if not np.isclose(vmin, vmax):
+                stimulus_with_br = (stimulus_with_br - vmin) / (vmax - vmin)
+            
+            # Store results
+            stimulus_dict[subject].append((emotion, stimulus_no_br, stimulus_with_br, sname))
+            
+            processed_count += 1
+            if processed_count % 10 == 0:
+                print(f"   Processed {processed_count} files...")
+            
+        except Exception as e:
+            skipped_errors += 1
+            continue
     
-    print(f"\n📂 Loading stimulus file from subject {baseline_subject}:")
-    print(f"   Found {len(subject_stimulus_files)} stimulus files for this subject")
+    print(f"\n   ✅ Successfully processed: {processed_count} files")
+    print(f"   ⏭️  Skipped (no baseline): {skipped_no_baseline} files")
+    print(f"   ❌ Skipped (errors): {skipped_errors} files")
     
-    if not subject_stimulus_files:
-        print("❌ Still no matching stimulus files!")
-        return
+    # ============================================================
+    # STEP 4: Compile statistics
+    # ============================================================
+    stats = {
+        'total_baselines': len(baseline_dict),
+        'total_subjects_with_data': len(stimulus_dict),
+        'total_stimulus_processed': processed_count,
+        'subjects': list(stimulus_dict.keys()),
+        'emotions_per_subject': {subj: [e for e, _, _, _ in trials] for subj, trials in stimulus_dict.items()}
+    }
     
-    # Load ONE stimulus file as example
-    stimulus_file = subject_stimulus_files[0]
-    stimulus_name = os.path.basename(stimulus_file)
-    parts = stimulus_name.split("_")
-    stimulus_emotion = parts[1] if len(parts) > 1 else "UNKNOWN"
+    print("\n📊 Summary Statistics:")
+    print(f"   Total subjects with baselines: {stats['total_baselines']}")
+    print(f"   Total subjects with stimulus data: {stats['total_subjects_with_data']}")
+    print(f"   Total stimulus files processed: {stats['total_stimulus_processed']}")
+    print(f"   Average trials per subject: {processed_count / len(stimulus_dict):.1f}")
     
-    print(f"   File: {stimulus_name}")
-    print(f"   Emotion: {stimulus_emotion}")
-    
-    try:
-        with open(stimulus_file, 'r') as f:
-            stimulus_data = json.load(f)
-        
-        bvp_stimulus_raw = stimulus_data.get("BVPRaw", [])
-        
-        if not bvp_stimulus_raw:
-            print("❌ No BVP data in stimulus file!")
-            return
-        
-        # Handle different formats
-        if isinstance(bvp_stimulus_raw[0], list):
-            stimulus_raw = np.array([row[1] for row in bvp_stimulus_raw], dtype=float)
-        else:
-            stimulus_raw = _to_num(bvp_stimulus_raw)
-        
-        stimulus_raw = _interp_nan(stimulus_raw)
-        
-        print(f"   ✅ Stimulus loaded: {len(stimulus_raw)} samples ({len(stimulus_raw)/config.BVP_FS:.1f}s)")
-        
-    except Exception as e:
-        print(f"❌ Error loading stimulus: {e}")
-        return
-    
-    # Preprocess baseline
-    print(f"\n🔧 Preprocessing baseline signal...")
-    baseline_processed = preprocess_bvp_signal(
-        baseline_raw,
-        fs=config.BVP_FS,
-        use_baseline_correction=False,  # Don't use drift correction for baseline reduction
-        normalize=False  # Don't normalize yet
-    )
-    print(f"   ✅ Baseline preprocessed: {baseline_processed.shape}")
-    
-    # Preprocess stimulus WITHOUT baseline reduction
-    print(f"\n🔧 Preprocessing stimulus signal (WITHOUT baseline reduction)...")
-    stimulus_no_br = preprocess_bvp_signal(
-        stimulus_raw,
-        fs=config.BVP_FS,
-        use_baseline_correction=False,
-        normalize=True
-    )
-    print(f"   ✅ Stimulus preprocessed: {stimulus_no_br.shape}")
-    
-    # Preprocess stimulus WITH baseline reduction
-    print(f"\n🔧 Preprocessing stimulus signal (WITH baseline reduction)...")
-    
-    # First preprocess without normalization
-    stimulus_processed = preprocess_bvp_signal(
-        stimulus_raw,
-        fs=config.BVP_FS,
-        use_baseline_correction=False,
-        normalize=False
-    )
-    
-    # Match baseline length to stimulus
-    baseline_matched = baseline_processed.copy()
-    if len(baseline_matched) < len(stimulus_processed):
-        n_repeats = int(np.ceil(len(stimulus_processed) / len(baseline_matched)))
-        baseline_matched = np.tile(baseline_matched, n_repeats)[:len(stimulus_processed)]
-    elif len(baseline_matched) > len(stimulus_processed):
-        baseline_matched = baseline_matched[:len(stimulus_processed)]
-    
-    print(f"   Matched baseline length: {len(baseline_matched)} samples")
-    
-    # Apply baseline reduction (InvBase method)
-    stimulus_with_br = apply_baseline_reduction(stimulus_processed, baseline_matched)
-    
-    # Normalize after reduction
-    vmin, vmax = np.min(stimulus_with_br), np.max(stimulus_with_br)
-    if not np.isclose(vmin, vmax):
-        stimulus_with_br = (stimulus_with_br - vmin) / (vmax - vmin)
-    
-    print(f"   ✅ Baseline reduction applied: {stimulus_with_br.shape}")
-    
-    # Visualize comparison
-    print(f"\n📊 Creating visualization...")
-    
-    # Take first 30 seconds for visualization
-    vis_length = min(len(stimulus_raw), len(baseline_raw), config.BVP_FS * 30)
-    
-    fig, axes = plt.subplots(4, 1, figsize=(14, 10))
-    time = np.arange(vis_length) / config.BVP_FS
-    
-    # Plot 1: Raw signals
-    axes[0].plot(time, baseline_raw[:vis_length], 'g-', linewidth=0.8, label='Baseline (resting)', alpha=0.7)
-    axes[0].plot(time, stimulus_raw[:vis_length], 'b-', linewidth=0.8, label=f'Stimulus ({stimulus_emotion})', alpha=0.7)
-    axes[0].set_title(f'Raw BVP Signals - Subject {baseline_subject}', fontweight='bold', fontsize=12)
-    axes[0].set_ylabel('Amplitude')
-    axes[0].legend(loc='upper right')
-    axes[0].grid(True, alpha=0.3)
-    
-    # Plot 2: Preprocessed baseline
-    axes[1].plot(time, baseline_processed[:vis_length], 'g-', linewidth=0.8)
-    axes[1].set_title('Preprocessed Baseline (Resting State)', fontweight='bold', fontsize=12)
-    axes[1].set_ylabel('Amplitude')
-    axes[1].grid(True, alpha=0.3)
-    
-    # Plot 3: Stimulus WITHOUT baseline reduction
-    axes[2].plot(time, stimulus_no_br[:vis_length], 'orange', linewidth=0.8)
-    axes[2].set_title(f'Stimulus WITHOUT Baseline Reduction ({stimulus_emotion})', fontweight='bold', fontsize=12)
-    axes[2].set_ylabel('Normalized')
-    axes[2].grid(True, alpha=0.3)
-    
-    # Plot 4: Stimulus WITH baseline reduction
-    axes[3].plot(time, stimulus_with_br[:vis_length], 'purple', linewidth=0.8)
-    axes[3].set_title(f'Stimulus WITH Baseline Reduction (InvBase Method)', fontweight='bold', fontsize=12)
-    axes[3].set_ylabel('Normalized')
-    axes[3].set_xlabel('Time (seconds)')
-    axes[3].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig('bvp_baseline_reduction_demo.png', dpi=300, bbox_inches='tight')
-    print(f"   ✅ Visualization saved: bvp_baseline_reduction_demo.png")
-    plt.close()
-    
-    # Print statistics
-    print(f"\n📊 Signal Statistics:")
-    print(f"\n   Baseline (resting state):")
-    print(f"      Mean: {baseline_processed.mean():.4f}")
-    print(f"      Std:  {baseline_processed.std():.4f}")
-    print(f"      Min:  {baseline_processed.min():.4f}")
-    print(f"      Max:  {baseline_processed.max():.4f}")
-    
-    print(f"\n   Stimulus WITHOUT baseline reduction:")
-    print(f"      Mean: {stimulus_no_br.mean():.4f}")
-    print(f"      Std:  {stimulus_no_br.std():.4f}")
-    print(f"      Min:  {stimulus_no_br.min():.4f}")
-    print(f"      Max:  {stimulus_no_br.max():.4f}")
-    
-    print(f"\n   Stimulus WITH baseline reduction:")
-    print(f"      Mean: {stimulus_with_br.mean():.4f}")
-    print(f"      Std:  {stimulus_with_br.std():.4f}")
-    print(f"      Min:  {stimulus_with_br.min():.4f}")
-    print(f"      Max:  {stimulus_with_br.max():.4f}")
-    
-    print(f"\n✅ Baseline Reduction Test Complete!")
-    print(f"\n💡 Key Points:")
-    print(f"   - Each subject has ONE baseline file (resting state)")
-    print(f"   - This baseline is used to normalize ALL emotional trials from that subject")
-    print(f"   - InvBase method reduces inter-subject variability")
-    print(f"   - Helps the model generalize better across different subjects")
+    return baseline_dict, stimulus_dict, stats
+
+
+# ==================================================
+# VISUALIZATION
+# ==================================================
+
+def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64, 
+                                num_subjects=5, vis_duration_sec=30):
+    """
+    Save visualizations for multiple subjects showing baseline reduction effects.
+    """
+    print("\n" + "="*80)
+    print("CREATING VISUALIZATIONS")
     print("="*80)
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Select subjects to visualize
+    subjects = list(stimulus_dict.keys())
+    if len(subjects) > num_subjects:
+        # Select subjects with most trials
+        subjects = sorted(subjects, key=lambda s: len(stimulus_dict[s]), reverse=True)[:num_subjects]
+    
+    print(f"\n📊 Creating visualizations for {len(subjects)} subjects...")
+    
+    vis_length = fs * vis_duration_sec
+    
+    for idx, subject in enumerate(subjects, 1):
+        print(f"\n   Subject {idx}/{len(subjects)}: {subject}")
+        
+        baseline = baseline_dict[subject]
+        trials = stimulus_dict[subject]
+        
+        print(f"      Baseline: {len(baseline)} samples ({len(baseline)/fs:.1f}s)")
+        print(f"      Trials: {len(trials)}")
+        
+        # Create figure for this subject
+        fig, axes = plt.subplots(len(trials) + 1, 3, figsize=(18, 4 * (len(trials) + 1)))
+        
+        if len(trials) == 0:
+            axes = axes.reshape(1, 3)
+        elif len(trials) == 1:
+            axes = axes.reshape(2, 3)
+        
+        time = np.arange(min(vis_length, len(baseline))) / fs
+        
+        # Row 0: Baseline
+        baseline_vis = baseline[:min(vis_length, len(baseline))]
+        
+        axes[0, 0].plot(time, baseline_vis, 'g-', linewidth=0.8)
+        axes[0, 0].set_title(f'Subject {subject} - Baseline (Resting)', fontweight='bold')
+        axes[0, 0].set_ylabel('Amplitude')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        axes[0, 1].text(0.5, 0.5, f'Subject: {subject}\nBaseline Recording\n(Resting State)', 
+                       ha='center', va='center', fontsize=12, transform=axes[0, 1].transAxes)
+        axes[0, 1].axis('off')
+        
+        axes[0, 2].text(0.5, 0.5, f'Total Trials: {len(trials)}\nEmotions: {", ".join(set([e for e, _, _, _ in trials]))}', 
+                       ha='center', va='center', fontsize=10, transform=axes[0, 2].transAxes)
+        axes[0, 2].axis('off')
+        
+        # Subsequent rows: Each trial
+        for trial_idx, (emotion, signal_no_br, signal_with_br, filename) in enumerate(trials, 1):
+            time_trial = np.arange(min(vis_length, len(signal_no_br))) / fs
+            signal_no_br_vis = signal_no_br[:min(vis_length, len(signal_no_br))]
+            signal_with_br_vis = signal_with_br[:min(vis_length, len(signal_with_br))]
+            
+            # Column 0: Without baseline reduction
+            axes[trial_idx, 0].plot(time_trial, signal_no_br_vis, 'orange', linewidth=0.8)
+            axes[trial_idx, 0].set_title(f'{emotion} - WITHOUT Baseline Reduction', fontweight='bold')
+            axes[trial_idx, 0].set_ylabel('Normalized')
+            axes[trial_idx, 0].grid(True, alpha=0.3)
+            
+            # Column 1: With baseline reduction
+            axes[trial_idx, 1].plot(time_trial, signal_with_br_vis, 'purple', linewidth=0.8)
+            axes[trial_idx, 1].set_title(f'{emotion} - WITH Baseline Reduction', fontweight='bold')
+            axes[trial_idx, 1].set_ylabel('Normalized')
+            axes[trial_idx, 1].grid(True, alpha=0.3)
+            
+            # Column 2: Comparison
+            axes[trial_idx, 2].plot(time_trial, signal_no_br_vis, 'orange', linewidth=0.8, 
+                                   label='No BR', alpha=0.7)
+            axes[trial_idx, 2].plot(time_trial, signal_with_br_vis, 'purple', linewidth=0.8, 
+                                   label='With BR', alpha=0.7)
+            axes[trial_idx, 2].set_title(f'{emotion} - Comparison', fontweight='bold')
+            axes[trial_idx, 2].set_ylabel('Normalized')
+            axes[trial_idx, 2].legend(loc='upper right')
+            axes[trial_idx, 2].grid(True, alpha=0.3)
+        
+        # Set x-label for bottom row
+        for col in range(3):
+            axes[-1, col].set_xlabel('Time (seconds)')
+        
+        plt.tight_layout()
+        
+        output_path = os.path.join(output_dir, f'subject_{subject}_baseline_reduction.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"      ✅ Saved: {output_path}")
+        plt.close()
+    
+    print(f"\n✅ All visualizations saved to: {output_dir}/")
+
+
+def create_summary_report(baseline_dict, stimulus_dict, stats, output_dir):
+    """Create a summary report of the baseline reduction process."""
+    print("\n" + "="*80)
+    print("CREATING SUMMARY REPORT")
+    print("="*80)
+    
+    report_path = os.path.join(output_dir, 'baseline_reduction_report.txt')
+    
+    with open(report_path, 'w') as f:
+        f.write("="*80 + "\n")
+        f.write("BVP BASELINE REDUCTION - SUMMARY REPORT\n")
+        f.write("="*80 + "\n\n")
+        
+        f.write("OVERVIEW\n")
+        f.write("-"*80 + "\n")
+        f.write(f"Total subjects with baselines: {stats['total_baselines']}\n")
+        f.write(f"Total subjects with stimulus data: {stats['total_subjects_with_data']}\n")
+        f.write(f"Total stimulus files processed: {stats['total_stimulus_processed']}\n")
+        f.write(f"Average trials per subject: {stats['total_stimulus_processed'] / stats['total_subjects_with_data']:.1f}\n\n")
+        
+        f.write("SUBJECTS WITH BASELINES\n")
+        f.write("-"*80 + "\n")
+        for subject in sorted(baseline_dict.keys()):
+            baseline_length = len(baseline_dict[subject])
+            baseline_duration = baseline_length / 64
+            num_trials = len(stimulus_dict.get(subject, []))
+            
+            f.write(f"{subject}: Baseline={baseline_duration:.1f}s, Trials={num_trials}\n")
+        
+        f.write("\n" + "="*80 + "\n")
+        f.write("DETAILED BREAKDOWN BY SUBJECT\n")
+        f.write("="*80 + "\n\n")
+        
+        for subject in sorted(stimulus_dict.keys()):
+            trials = stimulus_dict[subject]
+            emotions = [e for e, _, _, _ in trials]
+            emotion_counts = {}
+            for e in emotions:
+                emotion_counts[e] = emotion_counts.get(e, 0) + 1
+            
+            f.write(f"Subject: {subject}\n")
+            f.write(f"  Total trials: {len(trials)}\n")
+            f.write(f"  Emotions: {dict(emotion_counts)}\n")
+            f.write(f"  Files:\n")
+            for emotion, _, _, filename in trials:
+                f.write(f"    - {filename} ({emotion})\n")
+            f.write("\n")
+    
+    print(f"✅ Summary report saved: {report_path}")
 
 
 # ==================================================
@@ -360,24 +439,41 @@ def test_baseline_reduction_method(data_root, bvp_device='samsung_watch'):
 # ==================================================
 
 def main():
-    """Run baseline reduction test only."""
+    """Main test execution."""
     print("="*80)
-    print("BVP BASELINE REDUCTION TEST")
+    print("BVP BASELINE REDUCTION - COMPLETE DATASET TEST")
     print("="*80)
     print(f"Data path: {config.DATA_ROOT}")
     print(f"BVP sampling rate: {config.BVP_FS} Hz")
-    print(f"Device: {config.BVP_DEVICE.upper()}")
-    print(f"Baseline Reduction: {config.USE_BVP_BASELINE_REDUCTION}")
+    print(f"Output directory: {config.OUTPUT_DIR}")
+    print(f"Subjects to visualize: {config.NUM_SUBJECTS_TO_VISUALIZE}")
     print("="*80)
     
-    # Run baseline reduction test
-    test_baseline_reduction_method(config.DATA_ROOT, config.BVP_DEVICE)
+    # Load all data with baseline reduction
+    baseline_dict, stimulus_dict, stats = load_all_bvp_data_with_baseline_reduction(
+        config.DATA_ROOT, 
+        fs=config.BVP_FS
+    )
+    
+    # Save visualizations for selected subjects
+    save_subject_visualizations(
+        baseline_dict,
+        stimulus_dict,
+        config.OUTPUT_DIR,
+        fs=config.BVP_FS,
+        num_subjects=config.NUM_SUBJECTS_TO_VISUALIZE,
+        vis_duration_sec=config.VIS_DURATION_SEC
+    )
+    
+    # Create summary report
+    create_summary_report(baseline_dict, stimulus_dict, stats, config.OUTPUT_DIR)
     
     print("\n" + "="*80)
     print("🎉 BASELINE REDUCTION TEST COMPLETE!")
     print("="*80)
-    print("\n📁 Generated File:")
-    print("   - bvp_baseline_reduction_demo.png")
+    print(f"\n📁 Output Directory: {config.OUTPUT_DIR}/")
+    print(f"   - Subject visualizations: subject_*.png")
+    print(f"   - Summary report: baseline_reduction_report.txt")
     print("="*80)
 
 
