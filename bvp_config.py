@@ -35,7 +35,7 @@ class BVPConfig:
     
     # Baseline Reduction: Uses baseline recordings (InvBase method) to normalize
     # and reduce inter-subject variability (similar to EEG baseline reduction)
-    USE_BVP_BASELINE_REDUCTION = True
+    USE_BVP_BASELINE_REDUCTION = False  # Changed from True to False
     
     # ==========================================
     # DATA SPLIT MODE

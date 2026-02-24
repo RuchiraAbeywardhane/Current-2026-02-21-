@@ -176,7 +176,7 @@ def main(args):
         print("="*80)
         
         bvp_config = BVPConfig()
-        bvp_config.USE_BVP_BASELINE_REDUCTION = config.USE_BASELINE_REDUCTION
+        bvp_config.USE_BVP_BASELINE_REDUCTION = False  # Turn off BVP baseline reduction
         bvp_config.USE_BVP_BASELINE_CORRECTION = False
         
         bvp_X_raw, bvp_y, bvp_subjects, bvp_label_map = load_bvp_data(
