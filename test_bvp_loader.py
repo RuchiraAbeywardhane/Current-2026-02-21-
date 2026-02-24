@@ -23,6 +23,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
+# Import BVP configuration
+from bvp_config import BVPConfig
+
 # Import BVP data loader
 from bvp_data_loader import (
     preprocess_bvp_signal,
@@ -36,27 +39,15 @@ from bvp_data_loader import (
 # CONFIGURATION
 # ==================================================
 
-class TestConfig:
-    """Configuration for testing BVP data loader."""
-    # Data path - CHANGE THIS TO YOUR DATA PATH
-    DATA_ROOT = "E:/FInal Year Project/MyCodeSpace/Current(2026-02-21)/Data"
-    
-    # BVP parameters
-    BVP_FS = 64  # Samsung Watch sampling frequency
-    BVP_DEVICE = 'samsung_watch'  # Only use Samsung Watch
-    
-    # Visualization
-    NUM_SUBJECTS_TO_VISUALIZE = 5  # Number of subjects to save visualizations for
-    VIS_DURATION_SEC = 30  # Show first 30 seconds in plots
-    
-    # Output
-    OUTPUT_DIR = "bvp_baseline_reduction_results"
-    
-    SEED = 42
+# Use the existing BVP configuration
+config = BVPConfig()
 
+# Override specific settings for testing/visualization
+config.OUTPUT_DIR = "bvp_baseline_reduction_results"
+config.NUM_SUBJECTS_TO_VISUALIZE = 5  # Number of subjects to save visualizations for
+config.VIS_DURATION_SEC = 30  # Show first 30 seconds in plots
 
 # Set random seed
-config = TestConfig()
 random.seed(config.SEED)
 np.random.seed(config.SEED)
 
@@ -65,9 +56,12 @@ np.random.seed(config.SEED)
 # LOAD ALL BVP DATA WITH BASELINE REDUCTION
 # ==================================================
 
-def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
+def load_all_bvp_data_with_baseline_reduction(config):
     """
     Load ALL BVP data from dataset and apply baseline reduction per subject.
+    
+    Args:
+        config: BVPConfig object with all settings
     
     Returns:
         baseline_dict: {subject_id: baseline_signal}
@@ -77,6 +71,11 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     print("\n" + "="*80)
     print("LOADING ALL BVP DATA WITH BASELINE REDUCTION")
     print("="*80)
+    print(f"Data Root: {config.DATA_ROOT}")
+    print(f"Sampling Rate: {config.BVP_FS} Hz")
+    print(f"Baseline Correction: {config.USE_BVP_BASELINE_CORRECTION}")
+    print(f"Baseline Reduction: {config.USE_BVP_BASELINE_REDUCTION}")
+    print("="*80)
     
     # ============================================================
     # STEP 1: Load all baseline files
@@ -84,10 +83,10 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     print("\n📂 Step 1: Loading baseline files...")
     
     baseline_patterns = [
-        os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
+        os.path.join(config.DATA_ROOT, "*_BASELINE_SAMSUNG_WATCH.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
+        os.path.join(config.DATA_ROOT, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
     ]
     
     baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
@@ -125,16 +124,22 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
             
             baseline_raw = _interp_nan(baseline_raw)
             
-            # Preprocess baseline
+            # Preprocess baseline using config parameters
             baseline_processed = preprocess_bvp_signal(
                 baseline_raw,
-                fs=fs,
-                use_baseline_correction=False,
+                fs=config.BVP_FS,
+                highcut_hz=config.BVP_LOWPASS_CUTOFF,
+                lowcut_hz=config.BVP_HIGHPASS_CUTOFF,
+                filter_order=config.BVP_FILTER_ORDER,
+                wavelet=config.BVP_WAVELET,
+                denoise_level=config.BVP_DENOISE_LEVEL,
+                use_baseline_correction=config.USE_BVP_BASELINE_CORRECTION,
+                use_highpass=config.USE_BVP_HIGHPASS,
                 normalize=False
             )
             
             baseline_dict[subject] = baseline_processed
-            print(f"   ✅ {subject}: {len(baseline_processed)} samples ({len(baseline_processed)/fs:.1f}s)")
+            print(f"   ✅ {subject}: {len(baseline_processed)} samples ({len(baseline_processed)/config.BVP_FS:.1f}s)")
             
         except Exception as e:
             baseline_load_errors += 1
@@ -151,8 +156,8 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     print("\n📂 Step 2: Loading stimulus files...")
     
     stimulus_patterns = [
-        os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+        os.path.join(config.DATA_ROOT, "*_STIMULUS_SAMSUNG_WATCH.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
     ]
     
     stimulus_files = sorted({p for pat in stimulus_patterns for p in glob.glob(pat)})
@@ -170,6 +175,7 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     processed_count = 0
     skipped_no_baseline = 0
     skipped_errors = 0
+    skipped_unknown_emotion = 0
     
     for spath in stimulus_files:
         sname = os.path.basename(spath)
@@ -181,6 +187,11 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
         
         subject = parts[0]
         emotion = parts[1].upper()
+        
+        # Check if emotion is in config mapping
+        if emotion not in config.SUPERCLASS_MAP:
+            skipped_unknown_emotion += 1
+            continue
         
         # Check if baseline exists for this subject
         if subject not in baseline_dict:
@@ -211,19 +222,31 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
             
             stimulus_raw = _interp_nan(stimulus_raw)
             
-            # Preprocess WITHOUT baseline reduction
+            # Preprocess WITHOUT baseline reduction (for comparison)
             stimulus_no_br = preprocess_bvp_signal(
                 stimulus_raw,
-                fs=fs,
-                use_baseline_correction=False,
+                fs=config.BVP_FS,
+                highcut_hz=config.BVP_LOWPASS_CUTOFF,
+                lowcut_hz=config.BVP_HIGHPASS_CUTOFF,
+                filter_order=config.BVP_FILTER_ORDER,
+                wavelet=config.BVP_WAVELET,
+                denoise_level=config.BVP_DENOISE_LEVEL,
+                use_baseline_correction=config.USE_BVP_BASELINE_CORRECTION,
+                use_highpass=config.USE_BVP_HIGHPASS,
                 normalize=True
             )
             
             # Preprocess WITH baseline reduction
             stimulus_processed = preprocess_bvp_signal(
                 stimulus_raw,
-                fs=fs,
-                use_baseline_correction=False,
+                fs=config.BVP_FS,
+                highcut_hz=config.BVP_LOWPASS_CUTOFF,
+                lowcut_hz=config.BVP_HIGHPASS_CUTOFF,
+                filter_order=config.BVP_FILTER_ORDER,
+                wavelet=config.BVP_WAVELET,
+                denoise_level=config.BVP_DENOISE_LEVEL,
+                use_baseline_correction=config.USE_BVP_BASELINE_CORRECTION,
+                use_highpass=config.USE_BVP_HIGHPASS,
                 normalize=False
             )
             
@@ -245,8 +268,11 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
             if not np.isclose(vmin, vmax):
                 stimulus_with_br = (stimulus_with_br - vmin) / (vmax - vmin)
             
+            # Get superclass label
+            superclass = config.SUPERCLASS_MAP[emotion]
+            
             # Store results
-            stimulus_dict[subject].append((emotion, stimulus_no_br, stimulus_with_br, sname))
+            stimulus_dict[subject].append((superclass, stimulus_no_br, stimulus_with_br, sname))
             
             processed_count += 1
             if processed_count % 10 == 0:
@@ -258,6 +284,7 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     
     print(f"\n   ✅ Successfully processed: {processed_count} files")
     print(f"   ⏭️  Skipped (no baseline): {skipped_no_baseline} files")
+    print(f"   ⏭️  Skipped (unknown emotion): {skipped_unknown_emotion} files")
     print(f"   ❌ Skipped (errors): {skipped_errors} files")
     
     # ============================================================
@@ -275,7 +302,8 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
     print(f"   Total subjects with baselines: {stats['total_baselines']}")
     print(f"   Total subjects with stimulus data: {stats['total_subjects_with_data']}")
     print(f"   Total stimulus files processed: {stats['total_stimulus_processed']}")
-    print(f"   Average trials per subject: {processed_count / len(stimulus_dict):.1f}")
+    if len(stimulus_dict) > 0:
+        print(f"   Average trials per subject: {processed_count / len(stimulus_dict):.1f}")
     
     return baseline_dict, stimulus_dict, stats
 
@@ -284,8 +312,7 @@ def load_all_bvp_data_with_baseline_reduction(data_root, fs=64):
 # VISUALIZATION
 # ==================================================
 
-def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64, 
-                                num_subjects=5, vis_duration_sec=30):
+def save_subject_visualizations(baseline_dict, stimulus_dict, config):
     """
     Save visualizations for multiple subjects showing baseline reduction effects.
     """
@@ -294,17 +321,17 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64,
     print("="*80)
     
     # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     
     # Select subjects to visualize
     subjects = list(stimulus_dict.keys())
-    if len(subjects) > num_subjects:
+    if len(subjects) > config.NUM_SUBJECTS_TO_VISUALIZE:
         # Select subjects with most trials
-        subjects = sorted(subjects, key=lambda s: len(stimulus_dict[s]), reverse=True)[:num_subjects]
+        subjects = sorted(subjects, key=lambda s: len(stimulus_dict[s]), reverse=True)[:config.NUM_SUBJECTS_TO_VISUALIZE]
     
     print(f"\n📊 Creating visualizations for {len(subjects)} subjects...")
     
-    vis_length = fs * vis_duration_sec
+    vis_length = config.BVP_FS * config.VIS_DURATION_SEC
     
     for idx, subject in enumerate(subjects, 1):
         print(f"\n   Subject {idx}/{len(subjects)}: {subject}")
@@ -312,7 +339,7 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64,
         baseline = baseline_dict[subject]
         trials = stimulus_dict[subject]
         
-        print(f"      Baseline: {len(baseline)} samples ({len(baseline)/fs:.1f}s)")
+        print(f"      Baseline: {len(baseline)} samples ({len(baseline)/config.BVP_FS:.1f}s)")
         print(f"      Trials: {len(trials)}")
         
         # Create figure for this subject
@@ -323,7 +350,7 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64,
         elif len(trials) == 1:
             axes = axes.reshape(2, 3)
         
-        time = np.arange(min(vis_length, len(baseline))) / fs
+        time = np.arange(min(vis_length, len(baseline))) / config.BVP_FS
         
         # Row 0: Baseline
         baseline_vis = baseline[:min(vis_length, len(baseline))]
@@ -343,7 +370,7 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64,
         
         # Subsequent rows: Each trial
         for trial_idx, (emotion, signal_no_br, signal_with_br, filename) in enumerate(trials, 1):
-            time_trial = np.arange(min(vis_length, len(signal_no_br))) / fs
+            time_trial = np.arange(min(vis_length, len(signal_no_br))) / config.BVP_FS
             signal_no_br_vis = signal_no_br[:min(vis_length, len(signal_no_br))]
             signal_with_br_vis = signal_with_br[:min(vis_length, len(signal_with_br))]
             
@@ -375,39 +402,50 @@ def save_subject_visualizations(baseline_dict, stimulus_dict, output_dir, fs=64,
         
         plt.tight_layout()
         
-        output_path = os.path.join(output_dir, f'subject_{subject}_baseline_reduction.png')
+        output_path = os.path.join(config.OUTPUT_DIR, f'subject_{subject}_baseline_reduction.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"      ✅ Saved: {output_path}")
         plt.close()
     
-    print(f"\n✅ All visualizations saved to: {output_dir}/")
+    print(f"\n✅ All visualizations saved to: {config.OUTPUT_DIR}/")
 
 
-def create_summary_report(baseline_dict, stimulus_dict, stats, output_dir):
+def create_summary_report(baseline_dict, stimulus_dict, stats, config):
     """Create a summary report of the baseline reduction process."""
     print("\n" + "="*80)
     print("CREATING SUMMARY REPORT")
     print("="*80)
     
-    report_path = os.path.join(output_dir, 'baseline_reduction_report.txt')
+    report_path = os.path.join(config.OUTPUT_DIR, 'baseline_reduction_report.txt')
     
     with open(report_path, 'w') as f:
         f.write("="*80 + "\n")
         f.write("BVP BASELINE REDUCTION - SUMMARY REPORT\n")
         f.write("="*80 + "\n\n")
         
+        f.write("CONFIGURATION\n")
+        f.write("-"*80 + "\n")
+        f.write(f"Data Root: {config.DATA_ROOT}\n")
+        f.write(f"Sampling Rate: {config.BVP_FS} Hz\n")
+        f.write(f"Baseline Correction: {config.USE_BVP_BASELINE_CORRECTION}\n")
+        f.write(f"Baseline Reduction: {config.USE_BVP_BASELINE_REDUCTION}\n")
+        f.write(f"Highpass Filter: {config.USE_BVP_HIGHPASS}\n")
+        f.write(f"Lowpass Cutoff: {config.BVP_LOWPASS_CUTOFF} Hz\n")
+        f.write(f"Highpass Cutoff: {config.BVP_HIGHPASS_CUTOFF} Hz\n\n")
+        
         f.write("OVERVIEW\n")
         f.write("-"*80 + "\n")
         f.write(f"Total subjects with baselines: {stats['total_baselines']}\n")
         f.write(f"Total subjects with stimulus data: {stats['total_subjects_with_data']}\n")
         f.write(f"Total stimulus files processed: {stats['total_stimulus_processed']}\n")
-        f.write(f"Average trials per subject: {stats['total_stimulus_processed'] / stats['total_subjects_with_data']:.1f}\n\n")
+        if stats['total_subjects_with_data'] > 0:
+            f.write(f"Average trials per subject: {stats['total_stimulus_processed'] / stats['total_subjects_with_data']:.1f}\n\n")
         
         f.write("SUBJECTS WITH BASELINES\n")
         f.write("-"*80 + "\n")
         for subject in sorted(baseline_dict.keys()):
             baseline_length = len(baseline_dict[subject])
-            baseline_duration = baseline_length / 64
+            baseline_duration = baseline_length / config.BVP_FS
             num_trials = len(stimulus_dict.get(subject, []))
             
             f.write(f"{subject}: Baseline={baseline_duration:.1f}s, Trials={num_trials}\n")
@@ -443,6 +481,7 @@ def main():
     print("="*80)
     print("BVP BASELINE REDUCTION - COMPLETE DATASET TEST")
     print("="*80)
+    print(f"Using BVPConfig from bvp_config.py")
     print(f"Data path: {config.DATA_ROOT}")
     print(f"BVP sampling rate: {config.BVP_FS} Hz")
     print(f"Output directory: {config.OUTPUT_DIR}")
@@ -450,23 +489,13 @@ def main():
     print("="*80)
     
     # Load all data with baseline reduction
-    baseline_dict, stimulus_dict, stats = load_all_bvp_data_with_baseline_reduction(
-        config.DATA_ROOT, 
-        fs=config.BVP_FS
-    )
+    baseline_dict, stimulus_dict, stats = load_all_bvp_data_with_baseline_reduction(config)
     
     # Save visualizations for selected subjects
-    save_subject_visualizations(
-        baseline_dict,
-        stimulus_dict,
-        config.OUTPUT_DIR,
-        fs=config.BVP_FS,
-        num_subjects=config.NUM_SUBJECTS_TO_VISUALIZE,
-        vis_duration_sec=config.VIS_DURATION_SEC
-    )
+    save_subject_visualizations(baseline_dict, stimulus_dict, config)
     
     # Create summary report
-    create_summary_report(baseline_dict, stimulus_dict, stats, config.OUTPUT_DIR)
+    create_summary_report(baseline_dict, stimulus_dict, stats, config)
     
     print("\n" + "="*80)
     print("🎉 BASELINE REDUCTION TEST COMPLETE!")
