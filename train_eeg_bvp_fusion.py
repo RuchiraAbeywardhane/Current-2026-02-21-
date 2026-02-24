@@ -219,6 +219,7 @@ def main(args):
     print("CREATING DATA SPLIT (EXACT SAME AS EEGPipeline.py)")
     print("="*80)
     
+    # IMPORTANT: Create splits BEFORE indexing to avoid double-indexing bug
     split_indices = create_data_splits(eeg_y, eeg_subjects, config)
     
     print(f"\n📋 Split Summary:")
@@ -226,10 +227,29 @@ def main(args):
     print(f"   Val samples: {len(split_indices['val'])}")
     print(f"   Test samples: {len(split_indices['test'])}")
     
-    # Get split data
+    # Get split data - Apply indices ONCE here
     train_idx = split_indices['train']
     val_idx = split_indices['val']
     test_idx = split_indices['test']
+    
+    # Print subject-level split information for debugging
+    if config.SUBJECT_INDEPENDENT:
+        train_subjects_set = set(eeg_subjects[train_idx])
+        val_subjects_set = set(eeg_subjects[val_idx])
+        test_subjects_set = set(eeg_subjects[test_idx])
+        
+        print(f"\n🔍 Subject-Independent Split Verification:")
+        print(f"   Train subjects: {sorted(train_subjects_set)}")
+        print(f"   Val subjects: {sorted(val_subjects_set)}")
+        print(f"   Test subjects: {sorted(test_subjects_set)}")
+        print(f"   Train/Val overlap: {train_subjects_set & val_subjects_set}")
+        print(f"   Train/Test overlap: {train_subjects_set & test_subjects_set}")
+        print(f"   Val/Test overlap: {val_subjects_set & test_subjects_set}")
+        
+        if len(train_subjects_set & test_subjects_set) > 0:
+            print("   ⚠️  WARNING: Subject overlap detected between train and test!")
+        if len(val_subjects_set & test_subjects_set) > 0:
+            print("   ⚠️  WARNING: Subject overlap detected between val and test!")
     
     Xtr, Xva, Xte = eeg_X_features[train_idx], eeg_X_features[val_idx], eeg_X_features[test_idx]
     ytr, yva, yte = eeg_y[train_idx], eeg_y[val_idx], eeg_y[test_idx]
