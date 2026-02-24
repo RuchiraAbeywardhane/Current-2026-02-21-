@@ -57,6 +57,8 @@ from bvp_hybrid_encoder import BVPHybridEncoder
 # Import fusion models
 from multimodal_fusion import (
     EEGEncoder,
+    EarlyFusionModel,
+    LateFusionModel,
     HybridFusionModel,
     get_trainable_parameters
 )
@@ -337,16 +339,36 @@ def main(args):
             use_multiscale=args.use_multiscale_bvp
         )
         
-        # Wrap in fusion model
+        # Wrap in fusion model based on fusion type
         eeg_encoder = EEGEncoder(eeg_model, freeze_weights=False)
-        model = HybridFusionModel(
-            eeg_encoder,
-            bvp_encoder,
-            n_classes=config.NUM_CLASSES,
-            shared_dim=128,
-            num_heads=4,
-            use_bvp=True
-        )
+        
+        print(f"   Fusion Type: {args.fusion_type.upper()}")
+        
+        if args.fusion_type == 'early':
+            model = EarlyFusionModel(
+                eeg_encoder,
+                bvp_encoder,
+                n_classes=config.NUM_CLASSES,
+                dropout=0.3
+            )
+        elif args.fusion_type == 'late':
+            model = LateFusionModel(
+                eeg_encoder,
+                bvp_encoder,
+                n_classes=config.NUM_CLASSES,
+                fusion_method='learned'
+            )
+        elif args.fusion_type == 'hybrid':
+            model = HybridFusionModel(
+                eeg_encoder,
+                bvp_encoder,
+                n_classes=config.NUM_CLASSES,
+                shared_dim=128,
+                num_heads=4,
+                use_bvp=True
+            )
+        else:
+            raise ValueError(f"Unknown fusion type: {args.fusion_type}. Choose from: early, late, hybrid")
     else:
         # EEG-only mode
         model = eeg_model
@@ -532,6 +554,8 @@ if __name__ == "__main__":
                         help='Use multi-scale BVP encoder')
     parser.add_argument('--checkpoint', type=str, default='best_fusion_model.pt',
                         help='Output checkpoint path')
+    parser.add_argument('--fusion_type', type=str, default='hybrid', choices=['early', 'late', 'hybrid'],
+                        help='Fusion type: early, late, hybrid')
     
     args = parser.parse_args()
     main(args)
