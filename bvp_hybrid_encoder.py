@@ -1,15 +1,16 @@
 """
-BVP Hybrid Encoder Module
-==========================
+BVP Hybrid Encoder Module - Enhanced Multi-Scale Version
+=========================================================
 
 This module combines deep learned features with traditional handcrafted features
 for robust BVP-based emotion recognition.
 
-The hybrid approach leverages:
-1. Deep learning: Captures complex, non-linear patterns
-2. Handcrafted features: Provides interpretable physiological markers
+ENHANCEMENT: Added multi-scale processing from EMCNN while maintaining BiLSTM
+temporal modeling and richer handcrafted features (11 vs 5).
 
-This combination often outperforms either approach alone.
+The hybrid approach leverages:
+1. Deep learning: Multi-scale CNNs + BiLSTM for temporal patterns
+2. Handcrafted features: Provides interpretable physiological markers
 
 Author: Final Year Project
 Date: 2026-02-24
@@ -23,18 +24,17 @@ from bvp_handcrafted_features import BVPHandcraftedFeatures
 
 class BVPHybridEncoder(nn.Module):
     """
-    Hybrid BVP encoder combining deep learning and handcrafted features.
+    Enhanced hybrid BVP encoder with multi-scale processing.
     
-    This encoder extracts both learned representations (via BiLSTM) and
-    traditional physiological features (statistical, HRV, pulse amplitude)
-    to create a comprehensive BVP feature representation.
+    This encoder extracts both learned representations (via multi-scale CNN + BiLSTM)
+    and traditional physiological features (statistical, HRV, pulse amplitude).
     
     Architecture:
-    1. Deep Encoder Branch:
-       - Conv1d → BatchNorm → ReLU
-       - BiLSTM encoder
-       - Global average pooling
-       - Output: [B, 64] learned features
+    1. Multi-Scale Deep Encoder Branch:
+       - Scale 1: Original signal → Conv1d → BiLSTM
+       - Scale 2: Moving average (s=2) → Conv1d → BiLSTM  
+       - Scale 3: Downsampled (2x) → Conv1d → BiLSTM
+       - Feature fusion → Output: [B, 64] learned features
     
     2. Handcrafted Features Branch:
        - Peak detection
@@ -54,14 +54,13 @@ class BVPHybridEncoder(nn.Module):
         dropout (float): Dropout rate for deep encoder (default: 0.3)
         sampling_rate (float): BVP sampling rate in Hz (default: 64.0)
         min_peak_distance (int): Minimum distance between peaks (default: 20)
+        use_multiscale (bool): Use multi-scale processing (default: True)
         
     Input Shape:
         - x: [B, T, 1] where B=batch, T=time_steps
         
     Output Shape:
         - hybrid_features: [B, 75] - concatenated deep + handcrafted features
-        - (optional) deep_context: [B, 64] - deep features only
-        - (optional) handcrafted_features: [B, 11] - handcrafted features only
     """
     
     def __init__(
@@ -70,130 +69,153 @@ class BVPHybridEncoder(nn.Module):
         hidden_size=32,
         dropout=0.3,
         sampling_rate=64.0,
-        min_peak_distance=20
+        min_peak_distance=20,
+        use_multiscale=True
     ):
         super(BVPHybridEncoder, self).__init__()
         
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.sampling_rate = sampling_rate
+        self.use_multiscale = use_multiscale
         
         # ============================================================
-        # 1. DEEP ENCODER BRANCH
+        # 1. DEEP ENCODER BRANCH (with optional multi-scale)
         # ============================================================
-        # Uses Conv1d + BiLSTM to learn complex temporal patterns
-        self.deep_encoder = BVPEncoder(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            dropout=dropout
-        )
-        
-        # Get deep encoder output dimension
-        self.deep_feature_dim = self.deep_encoder.get_output_dim()  # 64
+        if use_multiscale:
+            # Multi-scale processing: 3 scales with shared architecture
+            self.scale1_encoder = BVPEncoder(input_size=input_size, hidden_size=hidden_size, dropout=dropout)
+            self.scale2_encoder = BVPEncoder(input_size=input_size, hidden_size=hidden_size, dropout=dropout)
+            self.scale3_encoder = BVPEncoder(input_size=input_size, hidden_size=hidden_size, dropout=dropout)
+            
+            # Fusion layer to combine multi-scale features
+            # Each encoder outputs 64 features → 192 total
+            self.scale_fusion = nn.Sequential(
+                nn.Linear(64 * 3, 64),
+                nn.LayerNorm(64),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            )
+            self.deep_feature_dim = 64
+        else:
+            # Single-scale processing (original)
+            self.deep_encoder = BVPEncoder(input_size=input_size, hidden_size=hidden_size, dropout=dropout)
+            self.deep_feature_dim = self.deep_encoder.get_output_dim()  # 64
         
         # ============================================================
         # 2. HANDCRAFTED FEATURES BRANCH
         # ============================================================
-        # Extracts traditional physiological features
         self.handcrafted_extractor = BVPHandcraftedFeatures(
             sampling_rate=sampling_rate,
-            min_peak_height=None,  # Auto-detect
+            min_peak_height=None,
             min_peak_distance=min_peak_distance
         )
         
-        # Get handcrafted feature dimension
         self.handcrafted_feature_dim = self.handcrafted_extractor.get_output_dim()  # 11
         
         # ============================================================
         # 3. FEATURE NORMALIZATION
         # ============================================================
-        # Normalize handcrafted features to match scale of deep features
-        # This ensures both feature types contribute equally to the hybrid vector
         self.handcrafted_norm = nn.LayerNorm(self.handcrafted_feature_dim)
         
         # ============================================================
         # 4. OUTPUT DIMENSIONS
         # ============================================================
-        # Total hybrid feature dimension = deep + handcrafted
         self.output_dim = self.deep_feature_dim + self.handcrafted_feature_dim  # 75
         
+    def _moving_average(self, x, window_size=2):
+        """Apply moving average to input signal."""
+        # x: [B, T, 1]
+        if window_size <= 1:
+            return x
+        
+        # Use 1D convolution for moving average
+        kernel = torch.ones(1, 1, window_size, device=x.device) / window_size
+        # Reshape: [B, T, 1] → [B, 1, T]
+        x_conv = x.transpose(1, 2)
+        # Apply conv with padding to maintain length
+        x_ma = torch.nn.functional.conv1d(x_conv, kernel, padding=window_size//2)
+        # Reshape back: [B, 1, T] → [B, T, 1]
+        x_ma = x_ma.transpose(1, 2)
+        
+        # Trim to original length if needed
+        if x_ma.shape[1] > x.shape[1]:
+            x_ma = x_ma[:, :x.shape[1], :]
+        
+        return x_ma
+    
     def forward(self, x, return_separate=False):
         """
-        Forward pass through hybrid encoder.
+        Forward pass through enhanced hybrid encoder.
         
         Args:
             x (torch.Tensor): Input BVP signal [B, T, 1]
-            return_separate (bool): If True, also return deep and handcrafted features separately
-                                   If False, return only concatenated hybrid features
+            return_separate (bool): If True, return deep and handcrafted features separately
         
         Returns:
             If return_separate=False:
                 hybrid_features: [B, 75] - concatenated feature vector
             If return_separate=True:
-                (hybrid_features, deep_context, handcrafted_features):
-                - hybrid_features: [B, 75]
-                - deep_context: [B, 64]
-                - handcrafted_features: [B, 11]
+                (hybrid_features, deep_context, handcrafted_features)
         """
         # ============================================================
-        # STEP 1: Extract deep learned features
+        # STEP 1: Extract deep learned features (multi-scale or single)
         # ============================================================
-        # Process through Conv1d + BiLSTM encoder
-        # Output: [B, 64] - global physiological state from learned patterns
-        deep_context = self.deep_encoder(x, return_sequence=False)
+        if self.use_multiscale:
+            # Scale 1: Original signal
+            scale1_features = self.scale1_encoder(x, return_sequence=False)  # [B, 64]
+            
+            # Scale 2: Moving average (smoothed signal)
+            x_ma = self._moving_average(x, window_size=2)
+            scale2_features = self.scale2_encoder(x_ma, return_sequence=False)  # [B, 64]
+            
+            # Scale 3: Downsampled signal
+            x_down = x[:, ::2, :]  # [B, T/2, 1]
+            scale3_features = self.scale3_encoder(x_down, return_sequence=False)  # [B, 64]
+            
+            # Concatenate multi-scale features
+            multiscale_features = torch.cat([scale1_features, scale2_features, scale3_features], dim=1)  # [B, 192]
+            
+            # Fuse multi-scale features to 64D
+            deep_context = self.scale_fusion(multiscale_features)  # [B, 64]
+        else:
+            # Single-scale processing
+            deep_context = self.deep_encoder(x, return_sequence=False)  # [B, 64]
         
         # ============================================================
         # STEP 2: Extract handcrafted features
         # ============================================================
-        # Compute traditional features (statistics, HRV, pulse amplitude)
-        # Output: [B, 11] - interpretable physiological markers
-        handcrafted_features = self.handcrafted_extractor(x)
+        handcrafted_features = self.handcrafted_extractor(x)  # [B, 11]
         
         # ============================================================
         # STEP 3: Normalize handcrafted features
         # ============================================================
-        # Apply layer normalization to standardize scale
-        # This prevents handcrafted features from being overwhelmed by deep features
         handcrafted_features_norm = self.handcrafted_norm(handcrafted_features)
         
         # ============================================================
         # STEP 4: Concatenate features
         # ============================================================
-        # Fuse deep learning and handcrafted features
-        # Output: [B, 75] where 75 = 64 (deep) + 11 (handcrafted)
         hybrid_features = torch.cat(
             [deep_context, handcrafted_features_norm],
             dim=1
-        )
+        )  # [B, 75]
         
-        # Return based on user preference
         if return_separate:
-            # Return all components for analysis/debugging
             return hybrid_features, deep_context, handcrafted_features
         else:
-            # Return only the fused hybrid vector
             return hybrid_features
     
     def get_output_dim(self):
-        """
-        Get the output dimension of the hybrid encoder.
-        
-        Returns:
-            int: Total feature dimension (75 = 64 deep + 11 handcrafted)
-        """
+        """Get the output dimension of the hybrid encoder."""
         return self.output_dim
     
     def get_feature_breakdown(self):
-        """
-        Get detailed breakdown of feature dimensions.
-        
-        Returns:
-            dict: Dictionary with feature dimension information
-        """
+        """Get detailed breakdown of feature dimensions."""
         return {
             'deep_features': self.deep_feature_dim,
             'handcrafted_features': self.handcrafted_feature_dim,
             'total_features': self.output_dim,
+            'multiscale_enabled': self.use_multiscale,
             'handcrafted_names': self.handcrafted_extractor.get_feature_names()
         }
 
@@ -214,7 +236,8 @@ if __name__ == "__main__":
         hidden_size=32,
         dropout=0.3,
         sampling_rate=64.0,
-        min_peak_distance=20
+        min_peak_distance=20,
+        use_multiscale=True
     )
     
     # Display architecture info
@@ -223,6 +246,7 @@ if __name__ == "__main__":
     print(f"  Deep features:        {breakdown['deep_features']}")
     print(f"  Handcrafted features: {breakdown['handcrafted_features']}")
     print(f"  Total hybrid:         {breakdown['total_features']}")
+    print(f"  Multiscale enabled:   {breakdown['multiscale_enabled']}")
     print(f"\nHandcrafted feature names:")
     for i, name in enumerate(breakdown['handcrafted_names']):
         print(f"  {i+1:2d}. {name}")
