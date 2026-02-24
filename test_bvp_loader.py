@@ -72,6 +72,7 @@ def load_all_bvp_data_with_baseline_reduction(config):
     print("LOADING ALL BVP DATA WITH BASELINE REDUCTION")
     print("="*80)
     print(f"Data Root: {config.DATA_ROOT}")
+    print(f"Device: EMPATICA")
     print(f"Sampling Rate: {config.BVP_FS} Hz")
     print(f"Baseline Correction: {config.USE_BVP_BASELINE_CORRECTION}")
     print(f"Baseline Reduction: {config.USE_BVP_BASELINE_REDUCTION}")
@@ -80,13 +81,13 @@ def load_all_bvp_data_with_baseline_reduction(config):
     # ============================================================
     # STEP 1: Load all baseline files
     # ============================================================
-    print("\n📂 Step 1: Loading baseline files...")
+    print("\n📂 Step 1: Loading Empatica baseline files...")
     
     baseline_patterns = [
-        os.path.join(config.DATA_ROOT, "*_BASELINE_SAMSUNG_WATCH.json"),
-        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-        os.path.join(config.DATA_ROOT, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
+        os.path.join(config.DATA_ROOT, "*_BASELINE_EMPATICA.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_EMPATICA.json"),
+        os.path.join(config.DATA_ROOT, "*_BASELINE_STIMULUS_EMPATICA.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_BASELINE_STIMULUS_EMPATICA.json")
     ]
     
     baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
@@ -153,11 +154,11 @@ def load_all_bvp_data_with_baseline_reduction(config):
     # ============================================================
     # STEP 2: Load all stimulus files
     # ============================================================
-    print("\n📂 Step 2: Loading stimulus files...")
+    print("\n📂 Step 2: Loading Empatica stimulus files...")
     
     stimulus_patterns = [
-        os.path.join(config.DATA_ROOT, "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(config.DATA_ROOT, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+        os.path.join(config.DATA_ROOT, "*_STIMULUS_EMPATICA.json"),
+        os.path.join(config.DATA_ROOT, "*", "*_STIMULUS_EMPATICA.json")
     ]
     
     stimulus_files = sorted({p for pat in stimulus_patterns for p in glob.glob(pat)})

@@ -368,9 +368,9 @@ def preprocess_bvp_signal(bvp_raw, fs, highcut_hz=15.0, lowcut_hz=0.5, filter_or
 
 def load_bvp_data(data_root, config):
     """
-    Load BVP data from Samsung Watch JSON files.
+    Load BVP data from Empatica JSON files.
     
-    This function searches for BVP data files from Samsung Watch,
+    This function searches for BVP data files from Empatica,
     applies preprocessing, and creates windowed samples for training.
     
     Args:
@@ -387,25 +387,25 @@ def load_bvp_data(data_root, config):
         label_to_id: Dictionary mapping label names to integers
     """
     print("\n" + "="*80)
-    print("LOADING BVP DATA (SAMSUNG WATCH)")
+    print("LOADING BVP DATA (EMPATICA)")
     print("="*80)
     
-    # Search for Samsung Watch BVP files only
+    # Search for Empatica BVP files only
     all_patterns = [
-        os.path.join(data_root, "*_STIMULUS_SAMSUNG_WATCH.json"),
-        os.path.join(data_root, "*", "*_STIMULUS_SAMSUNG_WATCH.json")
+        os.path.join(data_root, "*_STIMULUS_EMPATICA.json"),
+        os.path.join(data_root, "*", "*_STIMULUS_EMPATICA.json")
     ]
     
     files = sorted({p for pat in all_patterns for p in glob.glob(pat)})
     
-    print(f"Found {len(files)} Samsung Watch BVP files")
+    print(f"Found {len(files)} Empatica BVP files")
     
     if len(files) == 0:
-        print("\n❌ ERROR: No Samsung Watch BVP files found!")
+        print("\n❌ ERROR: No Empatica BVP files found!")
         print(f"   Searched in: {data_root}")
         if os.path.exists(data_root):
             print(f"   Directory contents: {os.listdir(data_root)[:10]}")
-        raise ValueError("No Samsung Watch BVP files found. Check DATA_ROOT path.")
+        raise ValueError("No Empatica BVP files found. Check DATA_ROOT path.")
     
     print(f"\n📁 Sample files:")
     for f in files[:3]:
@@ -430,12 +430,12 @@ def load_bvp_data(data_root, config):
     if use_baseline_reduction:
         print(f"\n📂 Loading baseline recordings...")
         
-        # Search for Samsung Watch baseline files
+        # Search for Empatica baseline files
         baseline_patterns = [
-            os.path.join(data_root, "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_BASELINE_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json"),
-            os.path.join(data_root, "*", "*_BASELINE_STIMULUS_SAMSUNG_WATCH.json")
+            os.path.join(data_root, "*_BASELINE_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_BASELINE_EMPATICA.json"),
+            os.path.join(data_root, "*_BASELINE_STIMULUS_EMPATICA.json"),
+            os.path.join(data_root, "*", "*_BASELINE_STIMULUS_EMPATICA.json")
         ]
         
         baseline_files = sorted({p for pat in baseline_patterns for p in glob.glob(pat)})
@@ -578,8 +578,8 @@ def load_bvp_data(data_root, config):
             bvp_data = None
             field_used = None
             
-            # Try different field names in order of preference (Samsung Watch specific)
-            possible_fields = ["BVP", "BVPRaw", "BVPProcessed", "PPG", "HR", "SAMSUNG_BVP"]
+            # Try different field names in order of preference (Empatica specific)
+            possible_fields = ["BVP", "BVPRaw", "BVPProcessed", "PPG", "HR"]
             
             for field_name in possible_fields:
                 if field_name in data and data[field_name]:
