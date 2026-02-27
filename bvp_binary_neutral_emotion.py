@@ -128,17 +128,49 @@ def prepare_binary_data(bvp_X, bvp_y, label_map, undersample=True, random_state=
     print("PREPARING BINARY DATA (NEUTRAL vs EMOTIONAL)")
     print("="*80)
     
-    # Find neutral label index
+    # Debug: Print label_map
+    print(f"   Label map: {label_map}")
+    
+    # Find neutral label index - try multiple approaches
     neutral_idx = None
+    
+    # Approach 1: Check for 'neutral' in lowercase keys
     for label_name, idx in label_map.items():
-        if 'neutral' in label_name.lower():
+        if 'neutral' in str(label_name).lower():
             neutral_idx = idx
+            print(f"   Found neutral label: '{label_name}' -> {neutral_idx}")
             break
     
+    # Approach 2: If not found, check if label_map values are strings
     if neutral_idx is None:
-        raise ValueError("Neutral label not found in label_map")
+        for idx, label_name in label_map.items():
+            if 'neutral' in str(label_name).lower():
+                neutral_idx = idx
+                print(f"   Found neutral label: {idx} -> '{label_name}'")
+                break
     
-    print(f"   Neutral label: {neutral_idx}")
+    # Approach 3: Check for label index 0 as neutral (common convention)
+    if neutral_idx is None:
+        print(f"   ⚠️  'Neutral' not found in label names. Checking label indices...")
+        print(f"   Unique labels in data: {np.unique(bvp_y)}")
+        
+        # Assume the first/lowest index might be neutral
+        if 0 in label_map.values() or 0 in label_map.keys():
+            neutral_idx = 0
+            print(f"   Assuming index 0 is neutral (common convention)")
+        elif len(label_map) > 0:
+            # Use the first label as neutral
+            neutral_idx = list(label_map.values())[0] if isinstance(list(label_map.keys())[0], str) else list(label_map.keys())[0]
+            print(f"   Using first label as neutral: {neutral_idx}")
+    
+    if neutral_idx is None:
+        raise ValueError(
+            f"Cannot identify neutral label in label_map: {label_map}\n"
+            f"Please ensure label_map contains a label with 'neutral' in its name, "
+            f"or modify the script to specify the correct neutral label index."
+        )
+    
+    print(f"   Using neutral label index: {neutral_idx}")
     
     # Create binary labels: 0=neutral, 1=emotional
     binary_labels = np.where(bvp_y == neutral_idx, 0, 1)
