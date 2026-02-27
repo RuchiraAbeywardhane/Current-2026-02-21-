@@ -191,3 +191,74 @@ def print_config():
 
 if __name__ == "__main__":
     print_config()
+
+"""
+Configuration file for BVP Binary Classification
+Modify these settings according to your dataset and requirements
+"""
+
+# ===========================
+# DATA CONFIGURATION
+# ===========================
+# Path to your BVP dataset
+DATA_FILE_PATH = "your_bvp_dataset.csv"
+
+# Neutral label in your dataset (e.g., 'neutral', 'Neutral', 'NEUTRAL', '0')
+NEUTRAL_LABEL = 'neutral'
+
+# Column name for emotions/labels (set to None for auto-detection)
+# Options: 'emotion', 'label', 'class', 'target', or your custom column name
+EMOTION_COLUMN = None  # Auto-detect if None
+
+# Columns to exclude from features (besides emotion column and binary_label)
+EXCLUDE_COLUMNS = ['subject', 'participant', 'id', 'timestamp']
+
+# ===========================
+# MODEL CONFIGURATION
+# ===========================
+# Random Forest parameters
+N_ESTIMATORS = 100
+MAX_DEPTH = 10
+RANDOM_STATE = 42
+N_JOBS = -1  # Use all CPU cores
+
+# ===========================
+# TRAINING CONFIGURATION
+# ===========================
+# Train-test split ratio
+TEST_SIZE = 0.2
+
+# Whether to balance dataset using undersampling
+BALANCE_DATASET = True
+
+# Whether to scale features
+SCALE_FEATURES = True
+
+# ===========================
+# OUTPUT CONFIGURATION
+# ===========================
+# Save confusion matrix plot
+SAVE_CONFUSION_MATRIX = True
+CONFUSION_MATRIX_FILENAME = 'bvp_confusion_matrix.png'
+
+# Save feature importance plot
+SAVE_FEATURE_IMPORTANCE = True
+FEATURE_IMPORTANCE_FILENAME = 'bvp_feature_importance.png'
+
+# Maximum number of features to display in importance plot
+MAX_FEATURES_TO_PLOT = 15
+
+# DPI for saved plots
+PLOT_DPI = 300
+
+# ===========================
+# ADVANCED OPTIONS
+# ===========================
+# Random undersampling strategy
+UNDERSAMPLING_STRATEGY = 'auto'  # 'auto' or ratio like 0.5
+
+# Stratify split (recommended: True)
+STRATIFY_SPLIT = True
+
+# Verbose output
+VERBOSE = True
