@@ -5,13 +5,13 @@ EEG Data Loader Module with Temporal Trimming
 This module handles all data loading, preprocessing, and feature extraction
 for the EEG emotion recognition pipeline with temporal trimming.
 
-MODIFICATION: Removes the first 10 seconds and last 10 seconds from each
+MODIFICATION: Removes the first 3 seconds and last 3 seconds from each
 EEG recording before preprocessing to remove potential artifacts from
 stimulus onset/offset periods.
 
 Features:
 - MUSE headband EEG data loading from JSON files
-- **TEMPORAL TRIMMING: Removes first 10s and last 10s**
+- **TEMPORAL TRIMMING: Removes first 3s and last 3s**
 - Baseline reduction (InvBase method)
 - Quality filtering (HSI, HeadBandOn)
 - Windowing with configurable overlap
@@ -40,8 +40,8 @@ from eeg_feature_extractor import extract_eeg_features
 # ==================================================
 
 # Temporal trimming parameters
-TRIM_START_SEC = 0.1  # Remove first 10 seconds
-TRIM_END_SEC = 0.1    # Remove last 10 seconds
+TRIM_START_SEC = 3.0  # Remove first 3 seconds (reduced from 10)
+TRIM_END_SEC = 3.0    # Remove last 3 seconds (reduced from 10)
 
 
 # ==================================================
@@ -240,7 +240,7 @@ def load_eeg_data(data_root, config):
     """
     Load EEG data from MUSE files with temporal trimming and optional baseline reduction.
     
-    **KEY MODIFICATION**: Removes first 10 seconds and last 10 seconds from each
+    **KEY MODIFICATION**: Removes first 3 seconds and last 3 seconds from each
     recording to eliminate potential artifacts from stimulus onset/offset.
     
     Args:
@@ -372,7 +372,7 @@ def load_eeg_data(data_root, config):
             signal = signal - np.nanmean(signal, axis=0, keepdims=True)
             
             # ============================================================
-            # TEMPORAL TRIMMING: Remove first 10s and last 10s
+            # TEMPORAL TRIMMING: Remove first 3s and last 3s
             # ============================================================
             original_length = len(signal)
             signal = trim_temporal_edges(signal, config.EEG_FS, TRIM_START_SEC, TRIM_END_SEC)
