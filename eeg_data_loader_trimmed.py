@@ -526,7 +526,7 @@ def create_data_splits(y_labels, subject_ids, config, train_ratio=0.70, val_rati
     print(f"\n📋 Split Summary:")
     print(f"   Train samples: {len(split_indices['train'])}")
     print(f"   Val samples: {len(split_indices['val'])}")
-    print(f"   Test samples: {len(split_indices['test']}")
+    print(f"   Test samples: {len(split_indices['test'])}")
     
     # Print class distribution for each split
     for split_name, indices in split_indices.items():
