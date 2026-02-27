@@ -5,13 +5,13 @@ EEG Data Loader Module with Temporal Trimming
 This module handles all data loading, preprocessing, and feature extraction
 for the EEG emotion recognition pipeline with temporal trimming.
 
-MODIFICATION: Removes the first 15 seconds and last 15 seconds from each
+MODIFICATION: Removes the first 10 seconds and last 10 seconds from each
 EEG recording before preprocessing to remove potential artifacts from
 stimulus onset/offset periods.
 
 Features:
 - MUSE headband EEG data loading from JSON files
-- **TEMPORAL TRIMMING: Removes first 15s and last 15s**
+- **TEMPORAL TRIMMING: Removes first 10s and last 10s**
 - Baseline reduction (InvBase method)
 - Quality filtering (HSI, HeadBandOn)
 - Windowing with configurable overlap
@@ -40,8 +40,8 @@ from eeg_feature_extractor import extract_eeg_features
 # ==================================================
 
 # Temporal trimming parameters
-TRIM_START_SEC = 15.0  # Remove first 15 seconds
-TRIM_END_SEC = 15.0    # Remove last 15 seconds
+TRIM_START_SEC = 10.0  # Remove first 10 seconds
+TRIM_END_SEC = 10.0    # Remove last 10 seconds
 
 
 # ==================================================
@@ -88,7 +88,7 @@ def _interp_nan(a):
     return a
 
 
-def trim_temporal_edges(signal, fs, trim_start_sec=15.0, trim_end_sec=15.0):
+def trim_temporal_edges(signal, fs, trim_start_sec=10.0, trim_end_sec=10.0):
     """
     Remove the first and last N seconds from a signal.
     
@@ -98,8 +98,8 @@ def trim_temporal_edges(signal, fs, trim_start_sec=15.0, trim_end_sec=15.0):
     Args:
         signal: (T, C) - EEG signal array with T timesteps and C channels
         fs: Sampling frequency in Hz
-        trim_start_sec: Seconds to remove from start (default: 15.0)
-        trim_end_sec: Seconds to remove from end (default: 15.0)
+        trim_start_sec: Seconds to remove from start (default: 10.0)
+        trim_end_sec: Seconds to remove from end (default: 10.0)
     
     Returns:
         trimmed_signal: (T', C) - Trimmed signal with T' < T
@@ -240,7 +240,7 @@ def load_eeg_data(data_root, config):
     """
     Load EEG data from MUSE files with temporal trimming and optional baseline reduction.
     
-    **KEY MODIFICATION**: Removes first 15 seconds and last 15 seconds from each
+    **KEY MODIFICATION**: Removes first 10 seconds and last 10 seconds from each
     recording to eliminate potential artifacts from stimulus onset/offset.
     
     Args:
@@ -372,7 +372,7 @@ def load_eeg_data(data_root, config):
             signal = signal - np.nanmean(signal, axis=0, keepdims=True)
             
             # ============================================================
-            # TEMPORAL TRIMMING: Remove first 15s and last 15s
+            # TEMPORAL TRIMMING: Remove first 10s and last 10s
             # ============================================================
             original_length = len(signal)
             signal = trim_temporal_edges(signal, config.EEG_FS, TRIM_START_SEC, TRIM_END_SEC)
@@ -526,7 +526,7 @@ def create_data_splits(y_labels, subject_ids, config, train_ratio=0.70, val_rati
     print(f"\n📋 Split Summary:")
     print(f"   Train samples: {len(split_indices['train'])}")
     print(f"   Val samples: {len(split_indices['val'])}")
-    print(f"   Test samples: {len(split_indices['test'])}")
+    print(f"   Test samples: {len(split_indices['test']}")
     
     # Print class distribution for each split
     for split_name, indices in split_indices.items():

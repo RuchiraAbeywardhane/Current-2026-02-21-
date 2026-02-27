@@ -4,14 +4,14 @@
     
     This script contains a complete EEG emotion recognition pipeline with:
     - Preprocessed EEG data loading (MUSE headband)
-    - **TEMPORAL TRIMMING: Removes first 15s and last 15s from each recording**
+    - **TEMPORAL TRIMMING: Removes first 10s and last 10s from each recording**
     - Baseline reduction (InvBase method)
     - Feature extraction (26 features per channel)
     - BiLSTM classifier with attention
     - Subject-independent or subject-dependent splits
     
     KEY MODIFICATION:
-    This pipeline removes the first 15 seconds and last 15 seconds from each
+    This pipeline removes the first 10 seconds and last 10 seconds from each
     EEG recording before preprocessing to eliminate potential artifacts from
     stimulus onset/offset periods, focusing analysis on the stable emotional
     response period.
@@ -70,12 +70,12 @@ def main():
     """EEG-only emotion recognition pipeline with temporal trimming."""
     print("=" * 80)
     print("EEG-ONLY EMOTION RECOGNITION PIPELINE")
-    print("WITH TEMPORAL TRIMMING (First 15s & Last 15s Removed)")
+    print("WITH TEMPORAL TRIMMING (First 10s & Last 10s Removed)")
     print("=" * 80)
     print(f"Dataset: {config.DATA_ROOT}")
     print(f"Mode: {'Subject-Independent' if config.SUBJECT_INDEPENDENT else 'Subject-Dependent'}")
     print(f"Baseline Reduction: {config.USE_BASELINE_REDUCTION}")
-    print(f"⏱️  Temporal Trimming: ENABLED (15s start + 15s end removed)")
+    print(f"⏱️  Temporal Trimming: ENABLED (10s start + 10s end removed)")
     print("=" * 80)
 
     # Step 1: Load EEG data with temporal trimming
@@ -103,7 +103,7 @@ def main():
     print("🎉 EEG PIPELINE WITH TEMPORAL TRIMMING COMPLETE! 🎉")
     print("=" * 80)
     print(f"✅ Model saved: {config.EEG_CHECKPOINT}")
-    print(f"⏱️  Temporal Trimming: First 15s and Last 15s removed from all recordings")
+    print(f"⏱️  Temporal Trimming: First 10s and Last 10s removed from all recordings")
     print(f"🎯 Focus: Stable emotional response period analyzed")
     print("=" * 80)
 
