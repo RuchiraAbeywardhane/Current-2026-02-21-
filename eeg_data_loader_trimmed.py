@@ -40,8 +40,8 @@ from eeg_feature_extractor import extract_eeg_features
 # ==================================================
 
 # Temporal trimming parameters
-TRIM_START_SEC = 10.0  # Remove first 10 seconds
-TRIM_END_SEC = 10.0    # Remove last 10 seconds
+TRIM_START_SEC = 0.0  # Remove first 10 seconds
+TRIM_END_SEC = 0.0    # Remove last 10 seconds
 
 
 # ==================================================
