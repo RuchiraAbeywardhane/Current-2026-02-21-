@@ -42,7 +42,7 @@ class BVPBinaryClassifier(nn.Module):
     Simple MLP classifier for binary neutral vs emotional classification.
     """
     
-    def __init__(self, input_dim=11, hidden_dims=[64, 32], dropout=0.3):
+    def __init__(self, input_dim=23, hidden_dims=[64, 32], dropout=0.3):
         super().__init__()
         
         layers = []
@@ -380,7 +380,7 @@ def main(args):
     print("="*80)
     
     model = BVPBinaryClassifier(
-        input_dim=11,  # BVP handcrafted features
+        input_dim=23,  # BVP enhanced features
         hidden_dims=args.hidden_dims,
         dropout=args.dropout
     ).to(device)
