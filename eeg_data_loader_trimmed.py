@@ -213,13 +213,9 @@ def load_baseline_files(files, data_root, config):
                         baseline_signal = np.stack([tp9[:L], af7[:L], af8[:L], tp10[:L]], axis=1)
                         baseline_signal = baseline_signal - np.nanmean(baseline_signal, axis=0, keepdims=True)
                         
-                        # Apply temporal trimming to baseline as well
-                        baseline_signal = trim_temporal_edges(
-                            baseline_signal, 
-                            config.EEG_FS,
-                            TRIM_START_SEC,
-                            TRIM_END_SEC
-                        )
+                        # DO NOT TRIM BASELINE: Baseline is a separate recording and should remain full length
+                        # Only the trial signals are trimmed to remove stimulus onset/offset artifacts
+                        # The baseline represents resting state and doesn't have stimulus timing issues
                         
                         if len(baseline_signal) > 0:
                             baseline_dict[subject] = baseline_signal
@@ -372,7 +368,7 @@ def load_eeg_data(data_root, config):
             signal = signal - np.nanmean(signal, axis=0, keepdims=True)
             
             # ============================================================
-            # TEMPORAL TRIMMING: Remove first 3s and last 3s
+            # TEMPORAL TRIMMING: Remove first Xs and last Xs
             # ============================================================
             original_length = len(signal)
             signal = trim_temporal_edges(signal, config.EEG_FS, TRIM_START_SEC, TRIM_END_SEC)
@@ -393,8 +389,17 @@ def load_eeg_data(data_root, config):
             if config.USE_BASELINE_REDUCTION and subject in baseline_dict:
                 baseline_signal = baseline_dict[subject]
                 
-                # Match lengths
+                # CRITICAL FIX: Match lengths BEFORE trimming to avoid double trimming
+                # The baseline was already trimmed in load_baseline_files
+                # We need to ensure both signals have the same length
                 common_len = min(len(signal), len(baseline_signal))
+                
+                if common_len < win_samples:
+                    # Skip if common length is too short after matching
+                    skipped_reasons['too_short_after_trim'] += 1
+                    not_reduced_count += 1
+                    continue
+                
                 signal_trim = signal[:common_len]
                 baseline_trim = baseline_signal[:common_len]
                 
