@@ -40,11 +40,6 @@ from eeg_data_loader import (
 # Import training functions from separate module
 from eeg_trainer import train_eeg_model
 
-# ==================================================
-# CONFIGURATION
-# ==================================================
-
-# Config moved to eeg_config.py
 
 # Global config instance
 config = Config()
@@ -56,13 +51,6 @@ torch.manual_seed(config.SEED)
 torch.cuda.manual_seed_all(config.SEED)
 
 print(f"Device: {config.DEVICE}")
-
-
-# ==================================================
-# MODEL ARCHITECTURE
-# ==================================================
-
-# Model moved to eeg_bilstm_model.py
 
 
 # ==================================================
