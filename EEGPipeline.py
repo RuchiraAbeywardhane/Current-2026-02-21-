@@ -30,8 +30,15 @@ from eeg_config import Config
 # Import model architecture
 from eeg_bilstm_model import SimpleBiLSTMClassifier
 
+# # # Import data loading functions from separate module
+# from eeg_data_loader import (
+#     load_eeg_data,
+#     extract_eeg_features,
+#     create_data_splits
+# )
+
 # # Import data loading functions from separate module
-from eeg_data_loader import (
+from eeg_data_loader_emognitionRaw import (
     load_eeg_data,
     extract_eeg_features,
     create_data_splits
