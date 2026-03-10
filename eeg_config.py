@@ -26,7 +26,7 @@ class Config:
     USE_BASELINE_REDUCTION = True  # For EEG
     
     # Data split mode
-    SUBJECT_INDEPENDENT = True
+    SUBJECT_INDEPENDENT = False
     CLIP_INDEPENDENT = False
     
     # Stratified split parameters
