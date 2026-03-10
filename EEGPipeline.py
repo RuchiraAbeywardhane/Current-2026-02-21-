@@ -78,7 +78,7 @@ def main():
     # check_json_structure(config.DATA_ROOT, num_samples=3)
 
     # Step 1: Load EEG data
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_trial_ids, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     
     # Step 2: Extract features
     eeg_X_features = extract_eeg_features(eeg_X_raw, config)
@@ -88,7 +88,7 @@ def main():
     print("CREATING DATA SPLIT")
     print("="*80)
     
-    split_indices = create_data_splits(eeg_y, eeg_subjects, config)
+    split_indices = create_data_splits(eeg_y, eeg_subjects, config, trial_ids=eeg_trial_ids)
     
     print(f"\n📋 Split Summary:")
     print(f"   Train samples: {len(split_indices['train'])}")

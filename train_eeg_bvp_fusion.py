@@ -164,7 +164,7 @@ def main(args):
     print("STEP 1: LOADING EEG DATA (EXACT SAME AS EEGPipeline.py)")
     print("="*80)
     
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_trial_ids, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     eeg_X_features = extract_eeg_features(eeg_X_raw, config)
     
     print(f"✅ EEG data loaded: {eeg_X_features.shape}")
@@ -204,6 +204,7 @@ def main(args):
         eeg_X_features = eeg_X_features[eeg_mask]
         eeg_y = eeg_y[eeg_mask]
         eeg_subjects = eeg_subjects[eeg_mask]
+        eeg_trial_ids = eeg_trial_ids[eeg_mask]
         
         bvp_X_raw = bvp_X_raw[bvp_mask]
         bvp_y = bvp_y[bvp_mask]
@@ -220,7 +221,7 @@ def main(args):
     print("="*80)
     
     # IMPORTANT: Create splits BEFORE indexing to avoid double-indexing bug
-    split_indices = create_data_splits(eeg_y, eeg_subjects, config)
+    split_indices = create_data_splits(eeg_y, eeg_subjects, config, trial_ids=eeg_trial_ids)
     
     print(f"\n📋 Split Summary:")
     print(f"   Train samples: {len(split_indices['train'])}")

@@ -198,7 +198,7 @@ def main(args):
     print("LOADING EEG DATA")
     print("="*80)
     
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_trial_ids, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     eeg_X_features = extract_eeg_features(eeg_X_raw, config)
     
     # Load BVP data
@@ -221,12 +221,13 @@ def main(args):
     eeg_X_features = eeg_X_features[eeg_mask]
     eeg_y = eeg_y[eeg_mask]
     eeg_subjects = eeg_subjects[eeg_mask]
+    eeg_trial_ids = eeg_trial_ids[eeg_mask]
     bvp_X_raw = bvp_X_raw[bvp_mask]
     
     print(f"✅ Aligned: {len(eeg_y)} samples from {len(common_subjects)} subjects")
     
     # Create splits
-    split_indices = create_data_splits(eeg_y, eeg_subjects, config)
+    split_indices = create_data_splits(eeg_y, eeg_subjects, config, trial_ids=eeg_trial_ids)
     test_idx = split_indices['test']
     train_idx = split_indices['train']
     

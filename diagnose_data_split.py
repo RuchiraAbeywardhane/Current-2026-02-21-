@@ -27,7 +27,7 @@ def analyze_splits():
     
     # Load data
     print("\n📁 Loading EEG data...")
-    eeg_X_raw, eeg_y, eeg_subjects, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
+    eeg_X_raw, eeg_y, eeg_subjects, eeg_trial_ids, eeg_label_map = load_eeg_data(config.DATA_ROOT, config)
     eeg_X_features = extract_eeg_features(eeg_X_raw, config)
     
     print(f"✅ Total samples: {len(eeg_y)}")
@@ -35,7 +35,7 @@ def analyze_splits():
     
     # Create splits
     print("\n📊 Creating splits...")
-    split_indices = create_data_splits(eeg_y, eeg_subjects, config)
+    split_indices = create_data_splits(eeg_y, eeg_subjects, config, trial_ids=eeg_trial_ids)
     
     train_idx = split_indices['train']
     val_idx = split_indices['val']
