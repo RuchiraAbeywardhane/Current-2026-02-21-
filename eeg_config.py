@@ -19,7 +19,7 @@ class Config:
     
     # Common parameters
     NUM_CLASSES = 4
-    SEED = 84
+    SEED = 0
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Baseline reduction (InvBase method)
