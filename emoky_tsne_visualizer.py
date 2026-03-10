@@ -57,7 +57,7 @@ matplotlib.rcParams.update({"font.size": 11})
 
 # Path to the 'clean-signals' folder (parent of '0.0078125S')
 # On Kaggle: "/kaggle/input/.../clean-signals"
-DATA_ROOT = "/kaggle/input/datasets/emoky/EmoKey Moments EEG Dataset (EKM-ED)/muse_wearable_data/preprocessed/clean-signals"
+DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emoky-dataset/EmoKey Moments EEG Dataset (EKM-ED)/muse_wearable_data/preprocessed/clean-signals"
 # t-SNE hyper-parameters
 TSNE_PERPLEXITY  = 30      # typical range 5–50
 TSNE_N_ITER      = 1000
