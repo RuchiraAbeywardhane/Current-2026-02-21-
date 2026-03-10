@@ -100,76 +100,126 @@ EMOTION_COLORS = {
 # PATH DISCOVERY
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _kaggle_input_search() -> str | None:
+    """
+    Walk /kaggle/input (or CWD) looking for any folder that directly contains
+    at least one stimulus CSV.  Returns the *parent* of that folder (i.e. the
+    subject root), or None if nothing is found.
+    """
+    search_roots = ["/kaggle/input", os.getcwd()]
+    stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
+    candidate_parents = set()
+
+    for search_root in search_roots:
+        if not os.path.isdir(search_root):
+            continue
+        for root, dirs, files in os.walk(search_root):
+            # Don't descend into __pycache__ / hidden dirs
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+            if stimulus_set & {f.upper() for f in files}:
+                candidate_parents.add(os.path.dirname(root))
+
+    if not candidate_parents:
+        return None
+    # Prefer the shallowest path
+    return min(candidate_parents, key=lambda p: p.count(os.sep))
+
+
 def _find_subject_root(data_root: str) -> str:
     """
-    Robustly locate the directory that contains the per-subject sub-folders.
+    Robustly locate the directory that directly contains per-subject sub-folders
+    (or the flat subject folder itself when there is only one subject).
 
     Strategy (tried in order):
-      1. data_root/<EMOKY_TIMESTEP_FOLDER>/          (canonical layout)
-      2. data_root itself is the timestep folder
-      3. Recursive walk: find the first directory whose children contain
-         at least one stimulus CSV (ANGER.csv / FEAR.csv / …).  This handles
-         any intermediate folder naming or extra nesting levels.
-
-    Returns the resolved subject-root directory path.
-    Raises ValueError with a helpful directory listing if nothing is found.
+      1. data_root/<EMOKY_TIMESTEP_FOLDER>/
+      2. data_root itself is the timestep folder name
+      3. data_root directly contains stimulus CSVs  →  flat single-subject layout;
+         treat data_root itself as the subject root's parent (return data_root)
+      4. Recursive walk from data_root
+      5. data_root doesn't exist → search all of /kaggle/input and CWD
     """
-    # ── Strategy 1: look for the named timestep folder ────────────────────
+    # ── Strategy 1 ────────────────────────────────────────────────────────
     ts_dir = os.path.join(data_root, EMOKY_TIMESTEP_FOLDER)
     if os.path.isdir(ts_dir):
         return ts_dir
 
-    # ── Strategy 2: data_root IS the timestep folder ──────────────────────
-    if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER:
+    # ── Strategy 2 ────────────────────────────────────────────────────────
+    if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER and os.path.isdir(data_root):
         return data_root
 
-    # ── Strategy 3: recursive search for subject folders ──────────────────
-    # A "subject folder" is a directory that contains at least one of the
-    # expected emotion CSVs directly inside it.
     stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
 
-    print(f"  ⚠️  '{EMOKY_TIMESTEP_FOLDER}' not found directly under DATA_ROOT.")
-    print(f"      Scanning recursively for subject folders …")
-
-    candidate_parents = set()
-    for root, dirs, files in os.walk(data_root):
-        files_lower = {f.upper() for f in files}
-        if stimulus_set & files_lower:          # at least one emotion CSV here
-            parent = os.path.dirname(root)      # folder *above* the subject dir
-            candidate_parents.add(parent)
-
-    if len(candidate_parents) == 1:
-        found = candidate_parents.pop()
-        print(f"      ✅ Auto-discovered subject root: {found}")
-        return found
-
-    if len(candidate_parents) > 1:
-        # Pick the shallowest (fewest path components) – avoids picking a
-        # nested duplicate
-        found = min(candidate_parents, key=lambda p: p.count(os.sep))
-        print(f"      ✅ Multiple candidates found; using shallowest: {found}")
-        return found
-
-    # ── Nothing found – give a useful error ──────────────────────────────
-    top_items = []
     if os.path.isdir(data_root):
+        # ── Strategy 3: CSVs are flat inside data_root itself ────────────
+        files_here = {f.upper() for f in os.listdir(data_root)}
+        if stimulus_set & files_here:
+            print(f"  ℹ️  Flat layout detected: emotion CSVs found directly in DATA_ROOT.")
+            print(f"      Treating DATA_ROOT as a single subject folder.")
+            # Return the *parent* so the normal subject-discovery loop finds
+            # data_root as one subject dir.
+            return data_root  # caller will glob(*) → finds CSVs directly
+
+        # ── Strategy 4: recursive walk inside data_root ──────────────────
+        print(f"  ⚠️  '{EMOKY_TIMESTEP_FOLDER}' not found directly under DATA_ROOT.")
+        print(f"      Scanning recursively for subject folders …")
+        candidate_parents = set()
         for root, dirs, files in os.walk(data_root):
-            depth = root.replace(data_root, "").count(os.sep)
-            if depth > 3:
-                dirs[:] = []   # prune deep walks
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+            if stimulus_set & {f.upper() for f in files}:
+                candidate_parents.add(os.path.dirname(root))
+
+        if len(candidate_parents) == 1:
+            found = candidate_parents.pop()
+            print(f"      ✅ Auto-discovered subject root: {found}")
+            return found
+        if len(candidate_parents) > 1:
+            found = min(candidate_parents, key=lambda p: p.count(os.sep))
+            print(f"      ✅ Multiple candidates; using shallowest: {found}")
+            return found
+
+    # ── Strategy 5: data_root doesn't exist or walk found nothing ────────
+    print(f"\n  ❌  DATA_ROOT not found or contains no EEG CSVs:")
+    print(f"      {data_root}")
+    print(f"\n  🔍  Searching /kaggle/input and working directory …")
+
+    found = _kaggle_input_search()
+    if found:
+        print(f"      ✅ Auto-discovered from filesystem: {found}")
+        return found
+
+    # ── Nothing worked – build a helpful diagnostic ───────────────────────
+    diagnostic_lines = []
+    for search_root in ["/kaggle/input", os.getcwd()]:
+        if not os.path.isdir(search_root):
+            diagnostic_lines.append(f"  (not found): {search_root}")
+            continue
+        diagnostic_lines.append(f"\n  Contents of {search_root}:")
+        for root, dirs, files in os.walk(search_root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            depth = root.replace(search_root, "").count(os.sep)
+            if depth > 4:
+                dirs[:] = []
                 continue
-            for d in dirs:
-                top_items.append(os.path.join(root, d).replace(data_root, ""))
-            if len(top_items) > 30:
+            indent = "    " * depth
+            diagnostic_lines.append(f"  {indent}{os.path.basename(root)}/")
+            if depth == 4:          # show files at leaf level
+                for f in files[:5]:
+                    diagnostic_lines.append(f"  {indent}  {f}")
+            if len(diagnostic_lines) > 60:
+                diagnostic_lines.append("  … (truncated)")
+                dirs[:] = []
                 break
 
     raise ValueError(
-        f"Cannot locate subject folders under:\n  {data_root}\n\n"
-        f"Expected sub-folders containing ANGER.csv / FEAR.csv / etc.\n"
-        f"Scanned tree (first 30 dirs):\n  " +
-        "\n  ".join(top_items[:30]) +
-        f"\n\nSet DATA_ROOT to the folder that directly contains "
-        f"the numbered subject sub-folders (e.g. '1/', '103/')."
+        f"Cannot locate Emoky subject folders.\n\n"
+        f"Tried DATA_ROOT:\n  {data_root}\n\n"
+        f"Expected sub-folders (or flat folder) containing "
+        f"ANGER.csv / FEAR.csv / etc.\n\n"
+        f"Filesystem diagnostic:\n" +
+        "\n".join(diagnostic_lines) +
+        f"\n\nFix: set DATA_ROOT to the folder that contains the numbered "
+        f"subject sub-folders (e.g. '1/', '103/') or directly to the folder "
+        f"containing ANGER.csv when there is only one subject."
     )
 
 
@@ -361,8 +411,17 @@ def load_emoky_raw(data_root: str):
         key=lambda p: (len(os.path.basename(p)), os.path.basename(p))
     )
 
+    # ── Flat layout: no sub-folders, CSVs are directly inside ts_dir ─────
     if not subject_dirs:
-        raise ValueError(f"No subject folders found under: {ts_dir}")
+        stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
+        files_here = {f.upper() for f in os.listdir(ts_dir)}
+        if stimulus_set & files_here:
+            print(f"  ℹ️  Single-subject flat layout: using '{os.path.basename(ts_dir)}' as subject.")
+            subject_dirs = [ts_dir]
+        else:
+            raise ValueError(
+                f"No subject sub-folders and no emotion CSVs found in:\n  {ts_dir}"
+            )
 
     print(f"Found {len(subject_dirs)} subject(s): "
           f"{[os.path.basename(d) for d in subject_dirs]}")
