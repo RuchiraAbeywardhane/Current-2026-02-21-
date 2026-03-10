@@ -216,6 +216,75 @@ def _load_baselines(subject_dir: str) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# PATH DISCOVERY
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _find_subject_root(data_root: str) -> str:
+    """
+    Robustly locate the directory that directly contains per-subject folders.
+
+    Strategy (tried in order):
+      1. data_root/<EMOKY_TIMESTEP_FOLDER>/   (canonical layout)
+      2. data_root itself is the timestep folder
+      3. Recursive walk: find the first directory whose children contain
+         at least one stimulus CSV (ANGER.csv / FEAR.csv / …).
+         Handles any intermediate folder naming or extra nesting levels.
+
+    Raises ValueError with a directory listing if nothing is found.
+    """
+    # Strategy 1
+    ts_dir = os.path.join(data_root, EMOKY_TIMESTEP_FOLDER)
+    if os.path.isdir(ts_dir):
+        return ts_dir
+
+    # Strategy 2
+    if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER:
+        return data_root
+
+    # Strategy 3 – recursive search
+    stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
+    print(f"   ⚠️  '{EMOKY_TIMESTEP_FOLDER}' not found directly under DATA_ROOT.")
+    print(f"       Scanning recursively for subject folders …")
+
+    candidate_parents = set()
+    for root, dirs, files in os.walk(data_root):
+        if stimulus_set & {f.upper() for f in files}:
+            candidate_parents.add(os.path.dirname(root))
+
+    if len(candidate_parents) == 1:
+        found = candidate_parents.pop()
+        print(f"   ✅ Auto-discovered subject root: {found}")
+        return found
+
+    if len(candidate_parents) > 1:
+        found = min(candidate_parents, key=lambda p: p.count(os.sep))
+        print(f"   ✅ Multiple candidates; using shallowest: {found}")
+        return found
+
+    # Build a diagnostic listing
+    top_items = []
+    if os.path.isdir(data_root):
+        for root, dirs, files in os.walk(data_root):
+            depth = root.replace(data_root, "").count(os.sep)
+            if depth > 3:
+                dirs[:] = []
+                continue
+            for d in dirs:
+                top_items.append(os.path.join(root, d).replace(data_root, ""))
+            if len(top_items) > 30:
+                break
+
+    raise ValueError(
+        f"Cannot locate subject folders under:\n  {data_root}\n\n"
+        f"Expected sub-folders containing ANGER.csv / FEAR.csv / etc.\n"
+        f"Scanned tree (first 30 dirs):\n  " +
+        "\n  ".join(top_items[:30]) +
+        f"\n\nSet DATA_ROOT to the folder that directly contains "
+        f"the numbered subject sub-folders (e.g. '1/', '103/')."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # MAIN LOADER  (public API – same 5-tuple signature as eeg_data_loader.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -245,25 +314,15 @@ def load_eeg_data(data_root: str, config):
     print("LOADING EEG DATA  –  Emoky / EKM-ED Dataset")
     print("=" * 80)
 
-    # ── Locate timestep folder ─────────────────────────────────────────────
-    ts_dir = os.path.join(data_root, EMOKY_TIMESTEP_FOLDER)
-    if not os.path.isdir(ts_dir):
-        # Accept data_root pointing directly at the timestep folder
-        if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER:
-            ts_dir = data_root
-        else:
-            raise ValueError(
-                f"Cannot find '{EMOKY_TIMESTEP_FOLDER}' under:\n  {data_root}\n"
-                f"Set DATA_ROOT to the 'clean-signals' parent directory, "
-                f"or directly to the '{EMOKY_TIMESTEP_FOLDER}' folder."
-            )
+    # ── Locate subject root (robust to any folder layout) ─────────────────
+    ts_dir = _find_subject_root(data_root)
 
     # Sampling rate for this dataset (overrides config.EEG_FS for windowing)
     fs = EMOKY_FS
     win_samples  = int(config.EEG_WINDOW_SEC * fs)
     step_samples = int(win_samples * (1.0 - config.EEG_OVERLAP))
 
-    print(f"   Timestep folder : {ts_dir}")
+    print(f"   Subject root    : {ts_dir}")
     print(f"   Sampling rate   : {fs} Hz")
     print(f"   Window          : {config.EEG_WINDOW_SEC}s  ({win_samples} samples)")
     print(f"   Overlap         : {config.EEG_OVERLAP*100:.0f}%  (step {step_samples} samples)")

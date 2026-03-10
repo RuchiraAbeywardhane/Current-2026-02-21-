@@ -95,6 +95,84 @@ EMOTION_COLORS = {
     "SADNESS":   "#457B9D",   # steel blue
 }
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATH DISCOVERY
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _find_subject_root(data_root: str) -> str:
+    """
+    Robustly locate the directory that contains the per-subject sub-folders.
+
+    Strategy (tried in order):
+      1. data_root/<EMOKY_TIMESTEP_FOLDER>/          (canonical layout)
+      2. data_root itself is the timestep folder
+      3. Recursive walk: find the first directory whose children contain
+         at least one stimulus CSV (ANGER.csv / FEAR.csv / …).  This handles
+         any intermediate folder naming or extra nesting levels.
+
+    Returns the resolved subject-root directory path.
+    Raises ValueError with a helpful directory listing if nothing is found.
+    """
+    # ── Strategy 1: look for the named timestep folder ────────────────────
+    ts_dir = os.path.join(data_root, EMOKY_TIMESTEP_FOLDER)
+    if os.path.isdir(ts_dir):
+        return ts_dir
+
+    # ── Strategy 2: data_root IS the timestep folder ──────────────────────
+    if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER:
+        return data_root
+
+    # ── Strategy 3: recursive search for subject folders ──────────────────
+    # A "subject folder" is a directory that contains at least one of the
+    # expected emotion CSVs directly inside it.
+    stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
+
+    print(f"  ⚠️  '{EMOKY_TIMESTEP_FOLDER}' not found directly under DATA_ROOT.")
+    print(f"      Scanning recursively for subject folders …")
+
+    candidate_parents = set()
+    for root, dirs, files in os.walk(data_root):
+        files_lower = {f.upper() for f in files}
+        if stimulus_set & files_lower:          # at least one emotion CSV here
+            parent = os.path.dirname(root)      # folder *above* the subject dir
+            candidate_parents.add(parent)
+
+    if len(candidate_parents) == 1:
+        found = candidate_parents.pop()
+        print(f"      ✅ Auto-discovered subject root: {found}")
+        return found
+
+    if len(candidate_parents) > 1:
+        # Pick the shallowest (fewest path components) – avoids picking a
+        # nested duplicate
+        found = min(candidate_parents, key=lambda p: p.count(os.sep))
+        print(f"      ✅ Multiple candidates found; using shallowest: {found}")
+        return found
+
+    # ── Nothing found – give a useful error ──────────────────────────────
+    top_items = []
+    if os.path.isdir(data_root):
+        for root, dirs, files in os.walk(data_root):
+            depth = root.replace(data_root, "").count(os.sep)
+            if depth > 3:
+                dirs[:] = []   # prune deep walks
+                continue
+            for d in dirs:
+                top_items.append(os.path.join(root, d).replace(data_root, ""))
+            if len(top_items) > 30:
+                break
+
+    raise ValueError(
+        f"Cannot locate subject folders under:\n  {data_root}\n\n"
+        f"Expected sub-folders containing ANGER.csv / FEAR.csv / etc.\n"
+        f"Scanned tree (first 30 dirs):\n  " +
+        "\n  ".join(top_items[:30]) +
+        f"\n\nSet DATA_ROOT to the folder that directly contains "
+        f"the numbered subject sub-folders (e.g. '1/', '103/')."
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SIGNAL HELPERS  (identical to eeg_data_loader_emoky.py)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -273,14 +351,7 @@ def load_emoky_raw(data_root: str):
     emotions   : (N,)      str  raw emotion name
     subjects   : (N,)      str  subject folder name
     """
-    ts_dir = os.path.join(data_root, EMOKY_TIMESTEP_FOLDER)
-    if not os.path.isdir(ts_dir):
-        if os.path.basename(data_root) == EMOKY_TIMESTEP_FOLDER:
-            ts_dir = data_root
-        else:
-            raise ValueError(
-                f"Cannot find '{EMOKY_TIMESTEP_FOLDER}' under:\n  {data_root}"
-            )
+    ts_dir = _find_subject_root(data_root)
 
     win_samples  = int(EEG_WINDOW_SEC * EEG_FS)
     step_samples = int(win_samples * (1.0 - EEG_OVERLAP))
