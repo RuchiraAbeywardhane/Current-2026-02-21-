@@ -255,6 +255,7 @@ def load_eeg_data(data_root, config):
         X_raw: (N, T, C) - Raw EEG windows
         y_labels: (N,) - Class labels as integers
         subject_ids: (N,) - Subject IDs for each window
+        trial_ids: (N,) - Trial IDs for each window
         label_to_id: Dictionary mapping label names to integers
     """
     print("\n" + "="*80)
@@ -290,7 +291,7 @@ def load_eeg_data(data_root, config):
         print(f"\n🔧 Baseline Reduction: DISABLED")
     
     # Prepare windowing parameters
-    all_windows, all_labels, all_subjects = [], [], []
+    all_windows, all_labels, all_subjects, all_trials = [], [], [], []
     win_samples = int(config.EEG_WINDOW_SEC * config.EEG_FS)
     step_samples = int(win_samples * (1.0 - config.EEG_OVERLAP))
     
@@ -327,6 +328,7 @@ def load_eeg_data(data_root, config):
             continue
         
         superclass = config.SUPERCLASS_MAP[emotion]
+        trial_id = f"{subject}_{emotion}"  # unique per recording file
         
         try:
             with open(fpath, "r") as f:
@@ -395,6 +397,7 @@ def load_eeg_data(data_root, config):
                     all_windows.append(window)
                     all_labels.append(superclass)
                     all_subjects.append(subject)
+                    all_trials.append(trial_id)
         
         except Exception as e:
             skipped_reasons['parse_error'] += 1
@@ -419,9 +422,11 @@ def load_eeg_data(data_root, config):
     label_to_id = {lab: i for i, lab in enumerate(unique_labels)}
     y_labels = np.array([label_to_id[lab] for lab in all_labels], dtype=np.int64)
     subject_ids = np.array(all_subjects)
+    trial_ids = np.array(all_trials)
     
     print(f"\n✅ EEG data loaded: {X_raw.shape}")
     print(f"   Label distribution: {Counter(all_labels)}")
+    print(f"   Unique trials: {len(np.unique(trial_ids))}")
     
     if config.USE_BASELINE_REDUCTION:
         total_files = reduced_count + not_reduced_count
@@ -431,7 +436,7 @@ def load_eeg_data(data_root, config):
         if total_files > 0:
             print(f"   📈 Reduction rate: {100*reduced_count/total_files:.1f}%")
     
-    return X_raw, y_labels, subject_ids, label_to_id
+    return X_raw, y_labels, subject_ids, trial_ids, label_to_id
 
 
 # ==================================================
@@ -551,9 +556,9 @@ def extract_eeg_features(X_raw, config, fs=256.0, eps=1e-12):
 # DATA SPLITTING
 # ==================================================
 
-def create_data_splits(y_labels, subject_ids, config, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15):
+def create_data_splits(y_labels, subject_ids, config, trial_ids=None, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15):
     """
-    Create train/val/test splits with subject-independent or random strategy.
+    Create train/val/test splits with subject-independent, clip-independent, or random strategy.
     
     Args:
         y_labels: Array of class labels
@@ -591,6 +596,29 @@ def create_data_splits(y_labels, subject_ids, config, train_ratio=0.70, val_rati
         print(f"  Train subjects: {len(train_subjects)}")
         print(f"  Val subjects: {len(val_subjects)}")
         print(f"  Test subjects: {len(test_subjects)}")
+
+    elif getattr(config, 'CLIP_INDEPENDENT', False) and trial_ids is not None:
+        print("  Strategy: CLIP-INDEPENDENT split (group by trial)")
+        
+        unique_trials = np.unique(trial_ids)
+        np.random.shuffle(unique_trials)
+        
+        n_test = int(len(unique_trials) * test_ratio)
+        n_val  = int(len(unique_trials) * val_ratio)
+        
+        test_trials  = unique_trials[:n_test]
+        val_trials   = unique_trials[n_test:n_test + n_val]
+        train_trials = unique_trials[n_test + n_val:]
+        
+        train_mask = np.isin(trial_ids, train_trials)
+        val_mask   = np.isin(trial_ids, val_trials)
+        test_mask  = np.isin(trial_ids, test_trials)
+        
+        print(f"  Total trials: {len(unique_trials)}")
+        print(f"  Train trials: {len(train_trials)}")
+        print(f"  Val trials:   {len(val_trials)}")
+        print(f"  Test trials:  {len(test_trials)}")
+
     else:
         print("  Strategy: RANDOM split")
         indices = np.arange(n_samples)
@@ -615,10 +643,9 @@ def create_data_splits(y_labels, subject_ids, config, train_ratio=0.70, val_rati
     
     print(f"\n📋 Split Summary:")
     print(f"   Train samples: {len(split_indices['train'])}")
-    print(f"   Val samples: {len(split_indices['val'])}")
-    print(f"   Test samples: {len(split_indices['test'])}")
+    print(f"   Val samples:   {len(split_indices['val'])}")
+    print(f"   Test samples:  {len(split_indices['test'])}")
     
-    # Print class distribution for each split
     for split_name, indices in split_indices.items():
         labels_split = y_labels[indices]
         dist = Counter(labels_split)
