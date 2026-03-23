@@ -49,9 +49,9 @@ if DATASET == "emoky":
         extract_eeg_features,
         create_data_splits,
     )
-else:  # "emognition"  (default / fallback)
+else:  # "emognition"
     from eeg_config import Config as ConfigClass
-    from eeg_data_loader import (
+    from eeg_data_loader_emognitionRaw import (
         load_eeg_data,
         extract_eeg_features,
         create_data_splits,
