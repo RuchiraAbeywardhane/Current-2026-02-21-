@@ -57,7 +57,7 @@ matplotlib.rcParams.update({"font.size": 11})
 
 # Path to the 'clean-signals' folder (parent of '0.0078125S')
 # On Kaggle: "/kaggle/input/.../clean-signals"
-DATA_ROOT = "/kaggle/input/datasets/ruchiabey/emoky-dataset/EmoKey Moments EEG Dataset (EKM-ED)/muse_wearable_data/preprocessed/clean-signals"
+DATA_ROOT = "/kaggle/input/datasets/emoky/EmoKey Moments EEG Dataset (EKM-ED)/muse_wearable_data/preprocessed/clean-signals"
 # t-SNE hyper-parameters
 TSNE_PERPLEXITY  = 30      # typical range 5–50
 TSNE_N_ITER      = 1000
@@ -411,17 +411,8 @@ def load_emoky_raw(data_root: str):
         key=lambda p: (len(os.path.basename(p)), os.path.basename(p))
     )
 
-    # ── Flat layout: no sub-folders, CSVs are directly inside ts_dir ─────
     if not subject_dirs:
-        stimulus_set = {f"{e}.csv" for e in STIMULUS_EMOTIONS}
-        files_here = {f.upper() for f in os.listdir(ts_dir)}
-        if stimulus_set & files_here:
-            print(f"  ℹ️  Single-subject flat layout: using '{os.path.basename(ts_dir)}' as subject.")
-            subject_dirs = [ts_dir]
-        else:
-            raise ValueError(
-                f"No subject sub-folders and no emotion CSVs found in:\n  {ts_dir}"
-            )
+        raise ValueError(f"No subject folders found under: {ts_dir}")
 
     print(f"Found {len(subject_dirs)} subject(s): "
           f"{[os.path.basename(d) for d in subject_dirs]}")

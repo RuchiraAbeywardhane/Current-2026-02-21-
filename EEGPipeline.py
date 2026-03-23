@@ -13,6 +13,7 @@
 
 import os
 import random
+import argparse
 
 import numpy as np
 import torch
@@ -21,9 +22,24 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from sklearn.metrics import f1_score, classification_report
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DATASET SELECTOR  ← change this to switch datasets
+# ARGUMENT PARSING
 # ──────────────────────────────────────────────────────────────────────────────
-DATASET = "emoky"        # "emognition"  |  "emoky"
+parser = argparse.ArgumentParser(description="EEG BiLSTM Emotion Recognition Pipeline")
+parser.add_argument(
+    "--dataset",
+    type=str,
+    choices=["emognition", "emoky"],
+    default="emoky",
+    help='Dataset to use: "emognition" (JSON, 256Hz, 4-class) or "emoky" (CSV, 128Hz, 3-class)'
+)
+parser.add_argument(
+    "--data_root",
+    type=str,
+    default=None,
+    help="Path to the dataset root directory. Overrides the default path in config."
+)
+args = parser.parse_args()
+DATASET = args.dataset
 # ──────────────────────────────────────────────────────────────────────────────
 
 if DATASET == "emoky":
@@ -46,6 +62,10 @@ from eeg_trainer import train_eeg_model
 
 # Global config instance
 config = ConfigClass()
+
+# Override DATA_ROOT if provided via command line
+if args.data_root:
+    config.DATA_ROOT = args.data_root
 
 # Set random seeds
 random.seed(config.SEED)
